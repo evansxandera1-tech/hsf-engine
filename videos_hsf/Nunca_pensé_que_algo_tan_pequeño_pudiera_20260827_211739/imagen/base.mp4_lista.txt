@@ -1,3 +1,0 @@
-file '/data/data/com.termux/files/home/hsf-engine/videos_hsf/Nunca_pensé_que_algo_tan_pequeño_pudiera_20260827_211739/imagen/seg_0.mp4'
-file '/data/data/com.termux/files/home/hsf-engine/videos_hsf/Nunca_pensé_que_algo_tan_pequeño_pudiera_20260827_211739/imagen/seg_1.mp4'
-file '/data/data/com.termux/files/home/hsf-engine/videos_hsf/Nunca_pensé_que_algo_tan_pequeño_pudiera_20260827_211739/imagen/seg_2.mp4'
