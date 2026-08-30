@@ -46,7 +46,8 @@ jobs:
           import os
           import hsf_engine
           from hsf_engine import (
-              procesar_todo, _elegir_texto_desde_drive, _elegir_gameplay_desde_drive,
+              procesar_todo, _elegir_texto_desde_drive, _marcar_texto_usado_en_drive,
+              _elegir_gameplay_desde_drive,
               _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
               FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
               VELOCIDAD_EFECTO_POR_DEFECTO,
@@ -56,7 +57,7 @@ jobs:
           logger.addHandler(logging.StreamHandler())
           logger.setLevel(logging.INFO)
 
-          guion = _elegir_texto_desde_drive(logger=logger)
+          guion, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
           if not guion:
               raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
 
@@ -90,4 +91,5 @@ jobs:
           }
 
           _subir_ultimo_resultado_a_youtube(logger)
+          _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger)
           PYEOF
