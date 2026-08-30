@@ -1,0 +1,101 @@
+name: Prueba video real (gameplay + 3 min, privado)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instalar rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configurar rclone (credenciales de Drive)
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+      - name: Instalar dependencias de Python
+        run: pip install -r requirements.txt
+
+      - name: Generar video real (3 min, gameplay) + subir privado a YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HSF_PRIVACIDAD_YOUTUBE: "private"
+        run: |
+          python3 << 'PYEOF'
+          import logging
+          import hsf_engine
+          from hsf_engine import (
+              procesar_todo, _elegir_gameplay_desde_drive,
+              _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
+              VOZ_NARRADOR, FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              VELOCIDAD_EFECTO_POR_DEFECTO,
+          )
+          import os
+
+          logger = logging.getLogger("prueba_video_real")
+          logger.addHandler(logging.StreamHandler())
+          logger.setLevel(logging.INFO)
+
+          guion = """Descubrí que el esposo de mi hermana me escribía de madrugada y no supe qué hacer.
+
+          Todo empezó hace tres meses. Yo estaba pasando por un momento difícil, recién separada, y mi cuñado Andrés siempre había sido cercano a la familia, así que no me pareció raro que me escribiera para preguntarme cómo estaba. Al principio eran mensajes normales, de apoyo, del tipo que le mandaría cualquier familiar. Pero con el tiempo empezaron a llegar cada vez más tarde. Primero a las diez de la noche, después a las doce, y hace un par de semanas me escribió a las tres de la madrugada solo para decirme que no podía dormir pensando en cómo estaba yo.
+
+          Nunca dijo nada explícito, nunca cruzó una línea clara que yo pudiera señalar con el dedo, pero algo en el tono empezó a sentirse distinto. Empezó a compartirme cosas de su matrimonio con mi hermana que yo sentía que no me correspondía escuchar. Me decía que se sentía solo, que ella ya no lo entendía como antes, que hablar conmigo era lo único que lo hacía sentir escuchado en el día.
+
+          Yo intenté poner distancia, contestar más corto, tardarme en responder, pero él insistía. Me llegó a decir, literalmente, que yo era la única persona con la que podía ser él mismo. Esa frase me heló la sangre, porque pensé de inmediato en mi hermana, en lo feliz que se veía en las fotos de su aniversario hace apenas dos meses.
+
+          Ahora no sé qué hacer. Si le cuento a mi hermana, puedo estar destruyendo su matrimonio por algo que, hasta ahora, son solo mensajes. Pero si no le digo nada, siento que la estoy traicionando cada día que dejo pasar, porque en el fondo sé que esto no es normal, que un cuñado no debería escribirle a su cuñada a las tres de la mañana para hablar de lo solo que se siente en su propio matrimonio.
+
+          Lo peor es que mi hermana confía completamente en mí. Soy la persona a la que ella le cuenta todo, la que la ayudó a organizar su boda, la que estuvo ahí en cada crisis de pareja que tuvieron antes. Y ahora resulta que soy yo la que guarda un secreto que podría cambiarle la vida.
+
+          Anoche volvió a escribirme. Le dije que por favor dejara de hacerlo, que no estaba bien, y me respondió que lo sentía, que no quería incomodarme, pero que necesitaba hablar con alguien. No supe si sentir alivio o si sentir que apenas estoy retrasando algo que tarde o temprano va a explotar.
+
+          Sigo dando vueltas a la misma pregunta cada noche: ¿debí decirle a mi hermana desde el primer mensaje raro, o hice bien en esperar para estar segura antes de arriesgarme a romper su matrimonio por una sospecha? Todavía no sé qué es lo correcto, y cada día que pasa siento que la respuesta se me hace más urgente."""
+
+          ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
+          if not ruta_gameplay:
+              raise RuntimeError("No se encontró gameplay disponible en gameplay_slither.")
+
+          procesar_todo(
+              guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
+              False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
+              efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
+              fondo_gameplay=True, ruta_gameplay=ruta_gameplay,
+              logger=logger, ruta_log=None,
+          )
+
+          with CANDADO_ESTADO:
+              resultado = dict(ESTADO.get("resultado") or {})
+          if not resultado.get("video"):
+              raise RuntimeError(f"El pipeline de video falló: {resultado.get('mensaje', 'sin detalle')}")
+
+          ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado["video"])
+          print("Video generado en:", ruta_video_absoluta)
+
+          hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
+              "ruta_video": ruta_video_absoluta,
+              "titulo_resumen": "Descubrí que el esposo de mi hermana me escribía de madrugada",
+              "subreddits": [],
+              "cantidad_historias": 1,
+              "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
+          }
+
+          _subir_ultimo_resultado_a_youtube(logger)
+          PYEOF
