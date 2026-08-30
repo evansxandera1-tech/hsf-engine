@@ -51,6 +51,8 @@ RCLONE_REMOTE_TXT_LIMPIO = "gdrive:txt-limpio"
 RCLONE_REMOTE_TXT_LIMPIO_USADOS = f"{RCLONE_REMOTE_TXT_LIMPIO}/usados"
 RCLONE_REMOTE_GAMEPLAY = "gdrive:gameplay_slither"
 RCLONE_REMOTE_MINIATURA = "gdrive:miniatura"
+CARPETA_INTRO_LOCAL = os.path.join(CARPETA_BASE, "intro_local_gdrive")
+RCLONE_REMOTE_INTRO = "gdrive:intro"
 
 for _c in [CARPETA_TEXTOS_LISTOS, CARPETA_GAMEPLAY_LOCAL]:
     os.makedirs(_c, exist_ok=True)
@@ -2418,6 +2420,18 @@ def procesar_todo(texto_bruto, frases_por_bloque, posicion, color_sub, tamano_su
         # suelto en videos_hsf/.
         ruta_relativa_video = f"{proyecto['nombre_proyecto']}/{nombre_final}"
 
+        # Intro con la misma tarjeta de la miniatura + un resumen corto,
+        # superpuesta sobre los primeros segundos del video (si hay
+        # plantilla disponible en Drive). Si falla, no corta el video:
+        # simplemente queda sin esa intro.
+        ruta_plantilla_intro = _obtener_plantilla_miniatura_desde_drive(logger=logger)
+        if ruta_plantilla_intro:
+            resumen_intro = " ".join(texto_bruto.split())[:160]
+            ruta_con_intro = ruta_final + ".intro.mp4"
+            ok_intro = agregar_intro_resumen(ruta_final, ruta_plantilla_intro, resumen_intro, ruta_con_intro, logger=logger)
+            if ok_intro:
+                os.replace(ruta_con_intro, ruta_final)
+
         with CANDADO_ESTADO:
             _cerrar_fase_actual()
             ESTADO["porcentaje"], ESTADO["fase"], ESTADO["terminado"], ESTADO["activo"] = 100, "listo", True, False
@@ -2695,6 +2709,7 @@ def _pipeline_video_automatico(logger, ruta_log):
     _ULTIMO_RESULTADO_AUTOMATICO = {
         "ruta_video": ruta_video_absoluta,
         "titulo_resumen": titulo_resumen,
+        "guion": guion,
         "subreddits": [],
         "cantidad_historias": 1,
     }
@@ -2719,6 +2734,74 @@ Reglas:
 Título original: "{titulo}"
 
 Devolvé ÚNICAMENTE el título final, sin comillas, sin explicaciones."""
+
+
+PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA pregunta corta en español, en primera persona, estilo "¿Soy la mala por...?" o "¿Hice mal en...?" — el tipo de pregunta que alguien haría en un foro de confesiones para que otros opinen si actuó bien o mal.
+
+Reglas:
+- Máximo 12 palabras.
+- Primera persona, tono de duda genuina, no exagerado.
+- Sin inventar datos que no estén en el resumen.
+- Sin emojis, sin comillas.
+
+Resumen: "{resumen}"
+
+Devolvé ÚNICAMENTE la pregunta final, empezando con "¿" y terminando con "?", sin explicaciones."""
+
+
+def _obtener_plantilla_intro_desde_drive(logger=None):
+    """
+    Descarga (si hace falta) la plantilla de la intro de resumen
+    desde gdrive:intro/intro_plantilla.png. Devuelve la ruta local,
+    o None si no se pudo conseguir."""
+    os.makedirs(CARPETA_INTRO_LOCAL, exist_ok=True)
+    ruta_local = os.path.join(CARPETA_INTRO_LOCAL, "intro_plantilla.png")
+    if os.path.exists(ruta_local):
+        return ruta_local
+    try:
+        resultado = subprocess.run(
+            ["rclone", "copyto", f"{RCLONE_REMOTE_INTRO}/intro_plantilla.png", ruta_local],
+            capture_output=True, text=True,
+        )
+        if resultado.returncode != 0 or not os.path.exists(ruta_local):
+            if logger:
+                logger.warning(f"No se pudo bajar la plantilla de intro: {resultado.stderr[-300:]}")
+            return None
+        return ruta_local
+    except Exception as e:
+        if logger:
+            logger.warning(f"Error bajando plantilla de intro: {e}")
+        return None
+
+
+def _generar_pregunta_miniatura(resumen_texto, logger=None):
+    """Genera con Gemini la pregunta-dilema que va en la miniatura (estilo
+    '¿Soy la mala por...?'). Si Gemini falla o no hay API key, arma una
+    versión de respaldo genérica a partir del resumen."""
+    def _respaldo():
+        base = " ".join(resumen_texto.split())[:70].rstrip()
+        return f"¿HICE MAL EN ESTA SITUACIÓN?"
+
+    if not GEMINI_API_KEY:
+        return _respaldo()
+
+    try:
+        prompt = PROMPT_PREGUNTA_MINIATURA.format(resumen=resumen_texto[:600])
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+            params={"key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        pregunta = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+        if not pregunta or "?" not in pregunta:
+            return _respaldo()
+        return pregunta.upper()
+    except Exception as e:
+        if logger:
+            logger.warning(f"Fallo al generar la pregunta de miniatura con Gemini: {e}")
+        return _respaldo()
 
 
 def _armar_titulo_youtube(titulo_resumen, subreddits, logger=None):
@@ -2794,10 +2877,9 @@ def generar_miniatura(ruta_video, titulo_miniatura, ruta_salida, logger=None):
     lineas = lineas[:3]
 
     nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
-    ruta_fuente = None
-    for archivo in os.listdir(CARPETA_FUENTES) if os.path.isdir(CARPETA_FUENTES) else []:
-        ruta_fuente = os.path.join(CARPETA_FUENTES, archivo)
-        break
+    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
+    if not os.path.exists(ruta_fuente):
+        ruta_fuente = None
 
     filtros = [f"scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO}", "drawbox=x=0:y=ih*0.55:w=iw:h=ih*0.45:color=black@0.55:t=fill"]
     y_inicial = 68
@@ -2824,56 +2906,403 @@ def generar_miniatura(ruta_video, titulo_miniatura, ruta_salida, logger=None):
     return ruta_salida
 
 
-def generar_miniatura_plantilla(titulo_miniatura, ruta_plantilla, ruta_salida, logger=None):
-    """Genera la miniatura a partir de una plantilla fija (imagen tipo
-    'post' subida por el usuario, con un recuadro blanco vacío para el
-    texto) en vez de un frame del video. Solo cambia el título; el diseño
-    de la plantilla (logo, fondo, íconos) queda igual en todos los videos.
-    Coordenadas del recuadro medidas sobre la plantilla original
-    (1280x720): x 150-1090, y 230-390 — texto en negro porque el recuadro
-    es blanco."""
-    texto_miniatura = titulo_miniatura.strip().upper()
-    if len(texto_miniatura) > 90:
-        texto_miniatura = texto_miniatura[:89].rstrip() + "…"
+def generar_fondo_ia_pollinations(resumen_texto, ruta_salida, logger=None, ancho=None, alto=None, prompt_personalizado=None):
+    """Genera una imagen con IA (Pollinations, gratis, sin API key). Si
+    prompt_personalizado viene armado (escena puntual de la historia,
+    generada con _generar_prompt_imagen_miniatura), lo usa; si no, cae al
+    prompt generico anterior (dos personas confrontandose) a partir del
+    resumen corto."""
+    import urllib.parse
 
-    palabras = texto_miniatura.split()
-    lineas, actual, largo = [], [], 0
-    max_chars_linea = 30
-    for palabra in palabras:
-        if actual and largo + len(palabra) + 1 > max_chars_linea:
+    ancho = ancho or RESOLUCION_ANCHO
+    alto = alto or RESOLUCION_ALTO
+
+    if prompt_personalizado:
+        prompt = (
+            f"{prompt_personalizado}, photorealistic, cinematic photography, "
+            f"film still, natural lighting, shallow depth of field, realistic "
+            f"faces, high detail"
+        )
+    else:
+        resumen_corto = " ".join(resumen_texto.split())[:180]
+        prompt = (
+            f"{resumen_corto}, two people confronting each other, dramatic tense "
+            f"argument, photorealistic, cinematic photography, film still, natural "
+            f"lighting, shallow depth of field, realistic faces, high detail"
+        )
+
+    prompt_codificado = urllib.parse.quote(prompt)
+    url = (
+        f"https://image.pollinations.ai/prompt/{prompt_codificado}"
+        f"?width={ancho}&height={alto}&nologo=true"
+    )
+    try:
+        r = requests.get(url, timeout=90)
+        r.raise_for_status()
+        with open(ruta_salida, "wb") as f:
+            f.write(r.content)
+        if logger:
+            logger.info(f"Imagen IA (Pollinations) generada: {ruta_salida}")
+        return ruta_salida
+    except Exception as e:
+        if logger:
+            logger.warning(f"No se pudo generar la imagen con IA (Pollinations): {e}")
+        return None
+
+
+PROMPT_IMAGEN_MINIATURA = """A partir de esta historia real narrada en primera persona y su titulo ya definido, identifica el momento MAS impactante, revelador o intrigante de toda la historia (el giro, la confesion, el hallazgo, la escena que genera mas ganas de saber que paso) y describi ESA escena puntual como prompt de imagen en ingles, para un generador de imagenes fotorrealista.
+
+Reglas del prompt:
+- Debe coincidir con lo que promete el titulo, no ser generico
+- Personajes con su emocion visible (shocked, guilty, crying, furious, etc.)
+- Lugar/escenario concreto segun la historia (kitchen, hospital, courtroom, car, etc.)
+- Un objeto o detalle visual que identifique el conflicto (a letter, a phone screen, a pregnancy test, a broken photo frame, etc.) si la historia lo tiene
+- NO texto en la imagen, NO logos, NO watermarks
+- Una sola escena, no collage
+
+Titulo: {titulo}
+
+Historia completa:
+{historia}
+
+Devolve SOLO el prompt en ingles, una sola linea, sin comillas ni explicacion."""
+
+
+def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
+    """Genera con Gemini un prompt en ingles para Pollinations describiendo
+    la escena mas intrigante/reveladora de TODA la historia (no solo el
+    resumen corto), coherente con el titulo ya generado. Si Gemini falla
+    o no hay API key, devuelve None y generar_fondo_ia_pollinations cae
+    al prompt generico de respaldo (dos personas confrontandose)."""
+    if not GEMINI_API_KEY or not historia_completa:
+        return None
+
+    try:
+        prompt = PROMPT_IMAGEN_MINIATURA.format(
+            titulo=titulo.strip(),
+            historia=historia_completa.strip()[:4000],
+        )
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+            params={"key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        prompt_imagen = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+        return prompt_imagen or None
+    except Exception as e:
+        if logger:
+            logger.warning(f"Fallo al generar prompt de imagen con Gemini, se usa el generico: {e}")
+        return None
+
+
+def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None, historia_completa=None):
+    """Miniatura estilo 'split': mitad izquierda con una imagen realista
+    generada con IA (dos personas confrontándose, a partir del resumen de
+    la historia) y mitad derecha una tarjeta blanca con el logo HSF, el
+    nombre del canal y una pregunta-dilema (generada con Gemini a partir
+    del resumen, estilo '¿Hice mal en...?'), en negro y mayúscula. Borde
+    rojo grueso alrededor de todo. Si la imagen con IA falla, usa un
+    frame del gameplay como respaldo para el lado izquierdo."""
+    ancho_mitad = RESOLUCION_ANCHO // 2
+    prompt_imagen = _generar_prompt_imagen_miniatura(
+        historia_completa or resumen_texto, titulo_miniatura, logger=logger,
+    )
+    ruta_imagen_izq = generar_fondo_ia_pollinations(
+        resumen_texto, ruta_salida + ".izq.jpg", logger=logger,
+        ancho=ancho_mitad, alto=RESOLUCION_ALTO,
+        prompt_personalizado=prompt_imagen,
+    )
+
+    pregunta = _generar_pregunta_miniatura(resumen_texto, logger=logger)
+
+    def envolver_por_ancho(texto, max_chars):
+        palabras = texto.split()
+        lineas, actual, largo = [], [], 0
+        for palabra in palabras:
+            if actual and largo + len(palabra) + 1 > max_chars:
+                lineas.append(" ".join(actual))
+                actual, largo = [], 0
+            actual.append(palabra)
+            largo += len(palabra) + 1
+        if actual:
             lineas.append(" ".join(actual))
-            actual, largo = [], 0
-        actual.append(palabra)
-        largo += len(palabra) + 1
-    if actual:
-        lineas.append(" ".join(actual))
-    lineas = lineas[:4]  # el recuadro es más alto que ancho, entran hasta 4 líneas cortas
+        return lineas
+
+    # Calibrado con DejaVu Sans Bold: a fontsize=40, ~27.4px/carácter;
+    # panel derecho tiene ~560px útiles de ancho (640 de mitad - 80 de
+    # margen), así que 20 caracteres por línea es lo que entra bien.
+    lineas = envolver_por_ancho(pregunta, 20)[:5]
 
     nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
-    ruta_fuente = None
-    for archivo in os.listdir(CARPETA_FUENTES) if os.path.isdir(CARPETA_FUENTES) else []:
-        ruta_fuente = os.path.join(CARPETA_FUENTES, archivo)
-        break
+    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
+    if not os.path.exists(ruta_fuente):
+        ruta_fuente = None
+    fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
 
-    # Recuadro medido: centro vertical en y=310, alto útil ~150px
-    centro_y = 310
-    alto_linea = 46
-    y_inicio = centro_y - (len(lineas) * alto_linea) // 2
+    alto_linea = 58
+    x_centro_panel = ancho_mitad + ancho_mitad // 2
+    y_inicio = 180 + (420 - len(lineas) * alto_linea) // 2
 
-    filtros = []
+    ruta_logo = os.path.join(CARPETA_BASE, "assets", "logo_hsf.png")
+    tiene_logo = os.path.exists(ruta_logo)
+
+    grosor_borde = 10
+    filtros_borde = [
+        f"drawbox=x=0:y=0:w={RESOLUCION_ANCHO}:h={grosor_borde}:color=0xDC1414:t=fill",
+        f"drawbox=x=0:y={RESOLUCION_ALTO-grosor_borde}:w={RESOLUCION_ANCHO}:h={grosor_borde}:color=0xDC1414:t=fill",
+        f"drawbox=x=0:y=0:w={grosor_borde}:h={RESOLUCION_ALTO}:color=0xDC1414:t=fill",
+        f"drawbox=x={RESOLUCION_ANCHO-grosor_borde}:y=0:w={grosor_borde}:h={RESOLUCION_ALTO}:color=0xDC1414:t=fill",
+        f"drawbox=x={ancho_mitad-grosor_borde//2}:y=0:w={grosor_borde}:h={RESOLUCION_ALTO}:color=0xDC1414:t=fill",
+    ]
+
+    dibujo_texto_centrado = []
+    for i, linea in enumerate(lineas):
+        linea_escapada = linea.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        y_pos = y_inicio + i * alto_linea
+        # Centrado manual: se mide el texto con la misma heurística de
+        # ancho por carácter usada para el wrap (evita tener que centrar
+        # con text_w, que en ffmpeg se calcula respecto a todo el canvas).
+        ancho_estimado = int(len(linea_escapada) * 27.4)
+        x_pos = x_centro_panel - ancho_estimado // 2
+        dibujo_texto_centrado.append(
+            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize=40:x={x_pos}:y={y_pos}"
+        )
+
+    filtros_nombre = []
+    if tiene_logo:
+        filtros_nombre.append(
+            f"drawtext=text='Historias Sin Filtro'{fontfile}:fontcolor=black:fontsize=26:"
+            f"x={ancho_mitad + 132}:y=52"
+        )
+
+    filtro_vf = ",".join(filtros_borde + filtros_nombre + dibujo_texto_centrado)
+
+    if ruta_imagen_izq:
+        entrada_izq = ruta_imagen_izq
+    elif ruta_video_fondo and os.path.exists(ruta_video_fondo):
+        # Recorta un frame del gameplay como respaldo, ya escalado a la
+        # mitad del ancho.
+        entrada_izq = ruta_salida + ".izq_respaldo.jpg"
+        try:
+            duracion = obtener_duracion_audio(ruta_video_fondo)
+        except Exception:
+            duracion = 10.0
+        instante = min(max(2.0, duracion * 0.15), duracion - 1 if duracion > 1 else 0)
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(instante), "-i", ruta_video_fondo,
+             "-vf", f"scale={ancho_mitad}:{RESOLUCION_ALTO}", "-frames:v", "1", entrada_izq],
+            capture_output=True,
+        )
+        if not os.path.exists(entrada_izq):
+            entrada_izq = None
+    else:
+        entrada_izq = None
+
+    if not entrada_izq:
+        cmd_fondo_izq = ["ffmpeg", "-y", "-f", "lavfi",
+                          "-i", f"color=c=gray:s={ancho_mitad}x{RESOLUCION_ALTO}",
+                          "-frames:v", "1", ruta_salida + ".izq_gris.jpg"]
+        subprocess.run(cmd_fondo_izq, capture_output=True)
+        entrada_izq = ruta_salida + ".izq_gris.jpg"
+
+    # Lienzo blanco de fondo + imagen izquierda superpuesta + (logo) +
+    # bordes + texto, todo en una sola pasada de ffmpeg con filter_complex.
+    entradas = ["-f", "lavfi", "-i", f"color=c=white:s={RESOLUCION_ANCHO}x{RESOLUCION_ALTO}",
+                "-i", entrada_izq]
+    mapa_filtro = f"[1:v]scale={ancho_mitad}:{RESOLUCION_ALTO}[izq];[0:v][izq]overlay=0:0[base]"
+    entrada_actual = "[base]"
+    if tiene_logo:
+        entradas += ["-i", ruta_logo]
+        mapa_filtro += f";{entrada_actual}[2:v]overlay={ancho_mitad+60}:34[conlogo]"
+        entrada_actual = "[conlogo]"
+    mapa_filtro += f";{entrada_actual}{filtro_vf}[out]"
+
+    cmd = ["ffmpeg", "-y"] + entradas + ["-filter_complex", mapa_filtro, "-map", "[out]", "-frames:v", "1", ruta_salida]
+
+    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
+        if logger:
+            logger.warning(f"No se pudo generar la miniatura split: {resultado.stderr[-500:]}")
+        return None
+    if logger:
+        logger.info(f"Miniatura split generada: {ruta_salida}")
+    return ruta_salida
+
+
+GEMINI_MODELO_IMAGEN = "gemini-2.5-flash-image"
+
+
+def _generar_ilustracion_fondo_gemini(resumen_texto, ruta_salida, logger=None):
+    """Genera una ilustracion de fondo (estilo comic simple y oscuro, en dos
+    escenas apiladas) a partir del resumen de la historia, usando Gemini
+    Image (Nano Banana). Devuelve la ruta local del PNG generado, o None si
+    falla (el llamador cae al fondo de gameplay/negro de siempre)."""
+    import base64
+
+    if not GEMINI_API_KEY:
+        if logger:
+            logger.warning("GEMINI_API_KEY vacia: no se genera ilustracion de fondo.")
+        return None
+
+    prompt = (
+        "Ilustracion digital estilo comic simple y oscuro, formato vertical, "
+        "dividida en dos escenas apiladas separadas por una linea blanca, "
+        "representando visualmente esta historia real (SIN texto escrito "
+        "dentro de la imagen, sin logos ni marcas de agua):\n\n"
+        f"{resumen_texto.strip()[:600]}"
+    )
+
+    intentos_maximos = 3
+    espera = 5
+    for intento in range(1, intentos_maximos + 1):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO_IMAGEN}:generateContent",
+                params={"key": GEMINI_API_KEY},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=90,
+            )
+            if resp.status_code == 429:
+                espera_real = espera
+                try:
+                    espera_real = max(espera, int(float(resp.headers.get("Retry-After", espera))))
+                except (TypeError, ValueError):
+                    pass
+                if logger:
+                    logger.warning(
+                        f"Gemini Image devolvio 429. Intento {intento}/{intentos_maximos}, "
+                        f"reintentando en {espera_real}s..."
+                    )
+                if intento < intentos_maximos:
+                    time.sleep(espera_real)
+                    espera *= 2
+                    continue
+                resp.raise_for_status()
+            resp.raise_for_status()
+            datos = resp.json()
+            partes = datos["candidates"][0]["content"]["parts"]
+            datos_b64 = next(
+                (p["inlineData"]["data"] for p in partes if "inlineData" in p), None
+            ) or next(
+                (p["inline_data"]["data"] for p in partes if "inline_data" in p), None
+            )
+            if not datos_b64:
+                raise ValueError("La respuesta de Gemini Image no trajo ninguna imagen")
+            with open(ruta_salida, "wb") as f:
+                f.write(base64.b64decode(datos_b64))
+            if logger:
+                logger.info(f"Ilustracion de fondo generada: {ruta_salida}")
+            return ruta_salida
+        except Exception as e:
+            if intento >= intentos_maximos:
+                if logger:
+                    logger.warning(f"Fallo la generacion de la ilustracion tras {intentos_maximos} intentos: {e}")
+                return None
+            if logger:
+                logger.warning(f"Error generando ilustracion (intento {intento}/{intentos_maximos}): {e}")
+            time.sleep(espera)
+            espera *= 2
+    return None
+
+
+def generar_miniatura_plantilla(titulo_miniatura, ruta_plantilla, ruta_salida, logger=None, ruta_video_fondo=None, resumen_texto=None):
+    """Genera la miniatura a partir de una plantilla fija (tarjeta tipo
+    'post', con el borde exterior transparente) superpuesta sobre, en este
+    orden de prioridad: (1) una ilustracion generada con Gemini Image a
+    partir del resumen de la historia si se pasa resumen_texto, (2) un
+    frame del gameplay si se pasa ruta_video_fondo, o (3) negro si no hay
+    nada de eso disponible. Posicion y tamanos de fuente calibrados a ojo
+    para que el titulo quede bien dentro del recuadro. La tarjeta esta
+    corrida hacia la derecha del cuadro dejando la izquierda libre para el
+    fondo elegido."""
+    texto_miniatura = titulo_miniatura.strip().upper()
+    if len(texto_miniatura) > 110:
+        texto_miniatura = texto_miniatura[:109].rstrip() + "…"
+
+    def envolver(texto, max_chars):
+        palabras = texto.split()
+        lineas, actual, largo = [], [], 0
+        for palabra in palabras:
+            if actual and largo + len(palabra) + 1 > max_chars:
+                lineas.append(" ".join(actual))
+                actual, largo = [], 0
+            actual.append(palabra)
+            largo += len(palabra) + 1
+        if actual:
+            lineas.append(" ".join(actual))
+        return lineas
+
+    lineas = envolver(texto_miniatura, 34)
+    tamano_fuente, y_inicio, alto_linea = 40, 270, 55
+    if len(lineas) > 2:
+        lineas = envolver(texto_miniatura, 45)
+        tamano_fuente, y_inicio, alto_linea = 30, 270, 42
+        lineas = lineas[:3]
+
+    nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
+    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
+    if not os.path.exists(ruta_fuente):
+        ruta_fuente = None
+
+    desplazamiento_tarjeta = 669
+    tarjeta_x_izq = 89
+    tarjeta_ancho = 1102
+    dibujo_texto = []
     for i, linea in enumerate(lineas):
         linea_escapada = linea.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
         y_pos = y_inicio + i * alto_linea
-        filtros.append(
-            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize=40:"
-            f"x=(w-text_w)/2:y={y_pos}"
+        x_expr = f"{tarjeta_x_izq + desplazamiento_tarjeta}+({tarjeta_ancho}-text_w)/2"
+        dibujo_texto.append(
+            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize={tamano_fuente}:"
+            f"borderw=1.2:bordercolor=black:x={x_expr}:y={y_pos}"
         )
+    cadena_texto = ",".join(dibujo_texto)
 
-    cmd = [
-        "ffmpeg", "-y", "-i", ruta_plantilla,
-        "-vf", ",".join(filtros), "-frames:v", "1", ruta_salida,
-    ]
+    ruta_ilustracion = None
+    if resumen_texto:
+        ruta_ilustracion_tmp = os.path.splitext(ruta_salida)[0] + "_fondo_ia.png"
+        ruta_ilustracion = _generar_ilustracion_fondo_gemini(resumen_texto, ruta_ilustracion_tmp, logger=logger)
+
+    if ruta_ilustracion and os.path.exists(ruta_ilustracion):
+        filtro_complejo = (
+            f"[0:v]scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO}[fondo];"
+            f"[fondo][1:v]overlay={desplazamiento_tarjeta}:0[con];"
+            f"[con]{cadena_texto}[out]"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-i", ruta_ilustracion,
+            "-i", ruta_plantilla,
+            "-filter_complex", filtro_complejo, "-map", "[out]",
+            "-frames:v", "1", ruta_salida,
+        ]
+    elif ruta_video_fondo and os.path.exists(ruta_video_fondo):
+        try:
+            duracion = obtener_duracion_audio(ruta_video_fondo)
+        except Exception:
+            duracion = 10.0
+        instante = min(max(2.0, duracion * 0.15), duracion - 1 if duracion > 1 else 0)
+        filtro_complejo = (
+            f"[1:v]scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO}[tmpl];"
+            f"[0:v][tmpl]overlay={desplazamiento_tarjeta}:0[conmpl];"
+            f"[conmpl]{cadena_texto}[out]"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-ss", str(instante), "-i", ruta_video_fondo,
+            "-i", ruta_plantilla,
+            "-filter_complex", filtro_complejo, "-map", "[out]",
+            "-frames:v", "1", ruta_salida,
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={RESOLUCION_ANCHO}x{RESOLUCION_ALTO}",
+            "-i", ruta_plantilla,
+            "-filter_complex", f"[0:v][1:v]overlay={desplazamiento_tarjeta}:0[con];[con]{cadena_texto}[out]",
+            "-map", "[out]", "-frames:v", "1", ruta_salida,
+        ]
+
     resultado = subprocess.run(cmd, capture_output=True, text=True)
     if resultado.returncode != 0 or not os.path.exists(ruta_salida):
         if logger:
@@ -2882,6 +3311,69 @@ def generar_miniatura_plantilla(titulo_miniatura, ruta_plantilla, ruta_salida, l
     if logger:
         logger.info(f"Miniatura (plantilla) generada: {ruta_salida}")
     return ruta_salida
+
+
+def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida, duracion_intro=4.0, logger=None):
+    """Superpone la misma tarjeta de la miniatura, con un resumen corto,
+    durante los primeros segundos del video final (encima del gameplay
+    que ya está sonando/moviéndose, sin cortar ni retrasar el audio)."""
+    texto = resumen_texto.strip()
+    if len(texto) > 160:
+        texto = texto[:159].rstrip() + "…"
+    palabras = texto.split()
+    lineas, actual, largo = [], [], 0
+    max_chars_linea = 34
+    for palabra in palabras:
+        if actual and largo + len(palabra) + 1 > max_chars_linea:
+            lineas.append(" ".join(actual))
+            actual, largo = [], 0
+        actual.append(palabra)
+        largo += len(palabra) + 1
+    if actual:
+        lineas.append(" ".join(actual))
+    lineas = lineas[:5]
+
+    nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
+    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
+    if not os.path.exists(ruta_fuente):
+        ruta_fuente = None
+
+    centro_y = 310
+    alto_linea = 38
+    y_inicio = centro_y - (len(lineas) * alto_linea) // 2
+    ventana = f"between(t,0,{duracion_intro})"
+
+    dibujo_texto = []
+    for i, linea in enumerate(lineas):
+        linea_escapada = linea.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
+        y_pos = y_inicio + i * alto_linea
+        dibujo_texto.append(
+            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize=32:"
+            f"x=(w-text_w)/2:y={y_pos}:enable='{ventana}'"
+        )
+    cadena_texto = ",".join(dibujo_texto)
+
+    filtro_complejo = (
+        f"[1:v]scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO},colorkey=0x1FDD77:0.35:0.15[tmpl];"
+        f"[0:v][tmpl]overlay=0:0:enable='{ventana}'[conplantilla];"
+        f"[conplantilla]{cadena_texto}[vout]"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-i", ruta_video, "-i", ruta_plantilla,
+        "-filter_complex", filtro_complejo,
+        "-map", "[vout]", "-map", "0:a",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "copy",
+        ruta_salida,
+    ]
+    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
+        if logger:
+            logger.warning(f"No se pudo agregar la intro de resumen al video: {resultado.stderr[-500:]}")
+        return False
+    if logger:
+        logger.info(f"Intro de resumen agregada ({duracion_intro}s): {ruta_salida}")
+    return True
 
 HASHTAGS_FIJOS = ["#historiasreales", "#confesiones", "#reddit", "#storytime", "#historiassinfiltro"]
 
@@ -3005,9 +3497,17 @@ def _subir_ultimo_resultado_a_youtube(logger):
         # plantilla.png), se usa esa en vez de sacar un frame del video:
         # mismo diseño siempre, solo cambia el título.
         ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
-        if ruta_plantilla:
-            ok_miniatura = generar_miniatura_plantilla(titulo_para_imagen, ruta_plantilla, ruta_miniatura, logger=logger)
-        else:
+        ok_miniatura = generar_miniatura_clickbait(
+            titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
+            ruta_video_fondo=resultado["ruta_video"],
+            historia_completa=resultado.get("guion"),
+        )
+        if not ok_miniatura and ruta_plantilla:
+            ok_miniatura = generar_miniatura_plantilla(
+                titulo_para_imagen, ruta_plantilla, ruta_miniatura, logger=logger,
+                ruta_video_fondo=resultado["ruta_video"],
+            )
+        if not ok_miniatura:
             ok_miniatura = generar_miniatura(resultado["ruta_video"], titulo_para_imagen, ruta_miniatura, logger=logger)
         if ok_miniatura:
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(ruta_miniatura, mimetype="image/jpeg")).execute()
@@ -3033,6 +3533,7 @@ if __name__ == "__main__":
     """
 
     logger, ruta_log = crear_logger_video()
+    ruta_gameplay_prueba = _elegir_gameplay_desde_drive(logger=logger)
     procesar_todo(
         texto_bruto=TEXTO_PRUEBA,
         frases_por_bloque=3,
@@ -3053,7 +3554,8 @@ if __name__ == "__main__":
         ancho_sub_pct=73,
         pos_y_pct=50,
         efecto_video="ninguno",
-        fondo_gameplay=True,
+        fondo_gameplay=bool(ruta_gameplay_prueba),
+        ruta_gameplay=ruta_gameplay_prueba,
         logger=logger,
         ruta_log=ruta_log,
     )

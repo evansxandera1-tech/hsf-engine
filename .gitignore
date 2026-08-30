@@ -1,5 +1,13 @@
-videos_hsf/
-gameplay_local_gdrive/
-miniatura_local_gdrive/
 __pycache__/
 *.pyc
+video_prueba.mp4
+video_con_intro*.mp4
+prueba_*.jpg
+prueba_*.png
+miniatura_prueba*.jpg
+miniatura_referencia*.jpg
+intro_resumen.png
+intro_resumen.pn
+miniatura_local_gdrive/
+intro_local_gdrive/
+generar_miniatura.p
