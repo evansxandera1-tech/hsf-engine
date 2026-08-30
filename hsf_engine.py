@@ -3316,40 +3316,81 @@ def generar_miniatura_plantilla(titulo_miniatura, ruta_plantilla, ruta_salida, l
     return ruta_salida
 
 
-def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida, duracion_intro=12.0, logger=None):
-    """Superpone la misma tarjeta de la miniatura, con un resumen corto,
-    durante los primeros segundos del video final (encima del gameplay
-    que ya está sonando/moviéndose, sin cortar ni retrasar el audio)."""
-    texto = resumen_texto.strip().upper()
-    if len(texto) > 100:
-        texto = texto[:100].rstrip()
+def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida, duracion_intro=10.0, logger=None):
+    """Superpone la plantilla real (logo HSF + tarjeta blanca, croma verde
+    recortado con colorkey) con 2-3 oraciones de contexto centradas dentro
+    del rectangulo blanco, debajo del encabezado. Dura al menos duracion_intro,
+    o mas si el texto es largo (para que de tiempo a leerlo)."""
+    if not ruta_plantilla or not os.path.exists(ruta_plantilla):
+        ruta_plantilla = _obtener_plantilla_intro_desde_drive(logger=logger)
+    if not ruta_plantilla:
+        if logger:
+            logger.warning("No hay plantilla de intro disponible, se omite la tarjeta")
+        return False
+
+    texto_limpio = resumen_texto.strip()
+    palabras_texto = texto_limpio.split()
+    duracion_real = max(duracion_intro, len(palabras_texto) * 0.35)
+
+    texto = texto_limpio.upper()
+    if len(texto) > 220:
+        texto = texto[:220].rstrip()
         if " " in texto:
             texto = texto.rsplit(" ", 1)[0]
         texto += "…"
 
-    nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
-    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
-    if not os.path.exists(ruta_fuente):
-        ruta_fuente = None
+    ruta_fuente = _mf_buscar_fuente_condensada()
     fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
 
-    ancho_texto_disponible = int(RESOLUCION_ANCHO * 0.72)
-    candidatos = [(32, 38), (28, 34), (24, 29), (20, 25), (17, 21)]
+    # Zona de texto dentro del rectangulo blanco de la plantilla (calculada
+    # sobre la plantilla real escalada a RESOLUCION_ANCHOxRESOLUCION_ALTO):
+    # el blanco va de x 237-1139 / y 76-692 sobre una plantilla de 1376x768,
+    # y el header (logo + nombre) termina en y=268 de esa misma plantilla.
+    from PIL import ImageFont
+
+    x_izq_texto = 330
+    x_der_texto = 1590
+    y_arriba_texto = 390
+    y_abajo_texto = 950
+    ancho_texto_disponible = x_der_texto - x_izq_texto - 160
+    alto_texto_disponible = y_abajo_texto - y_arriba_texto
+
+    def _medir_ancho(txt, fontsize):
+        try:
+            fuente_pil = ImageFont.truetype(ruta_fuente, fontsize) if ruta_fuente else ImageFont.load_default()
+        except Exception:
+            fuente_pil = ImageFont.load_default()
+        bbox = fuente_pil.getbbox(txt)
+        return bbox[2] - bbox[0]
+
+    def _envolver_real(txt, fontsize, ancho_max):
+        palabras = txt.split()
+        lineas_, actual = [], []
+        for palabra in palabras:
+            prueba = " ".join(actual + [palabra])
+            if actual and _medir_ancho(prueba, fontsize) > ancho_max:
+                lineas_.append(" ".join(actual))
+                actual = [palabra]
+            else:
+                actual.append(palabra)
+        if actual:
+            lineas_.append(" ".join(actual))
+        return lineas_
+
+    candidatos = [(56, 64), (50, 58), (44, 51), (38, 44), (32, 37), (27, 31), (22, 26)]
     lineas, tamano_texto, alto_linea = None, None, None
     for tamano, alto in candidatos:
-        max_chars = _mf_max_chars(tamano, 0, ancho_texto_disponible, margen_derecho=0)
-        prueba = _mf_envolver(texto, max_chars)
-        if len(prueba) <= 3:
-            lineas, tamano_texto, alto_linea = prueba[:3], tamano, alto
+        prueba = _envolver_real(texto, tamano, ancho_texto_disponible)
+        if len(prueba) <= 6 and len(prueba) * alto <= alto_texto_disponible:
+            lineas, tamano_texto, alto_linea = prueba[:6], tamano, alto
             break
     if lineas is None:
         tamano_texto, alto_linea = candidatos[-1]
-        max_chars = _mf_max_chars(tamano_texto, 0, ancho_texto_disponible, margen_derecho=0)
-        lineas = _mf_envolver(texto, max_chars)[:3]
+        lineas = _envolver_real(texto, tamano_texto, ancho_texto_disponible)[:6]
 
-    centro_y = 310
+    centro_y = (y_arriba_texto + y_abajo_texto) // 2
     y_inicio = centro_y - (len(lineas) * alto_linea) // 2
-    ventana = f"between(t,0,{duracion_intro})"
+    ventana = f"between(t,0,{duracion_real})"
 
     dibujo_texto = []
     for i, linea in enumerate(lineas):
@@ -3379,7 +3420,7 @@ def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida
             logger.warning(f"No se pudo agregar la intro de resumen al video: {resultado.stderr[-500:]}")
         return False
     if logger:
-        logger.info(f"Intro de resumen agregada ({duracion_intro}s): {ruta_salida}")
+        logger.info(f"Intro de resumen agregada ({duracion_real:.1f}s): {ruta_salida}")
     return True
 
 HASHTAGS_FIJOS = ["#historiasreales", "#confesiones", "#reddit", "#storytime", "#historiassinfiltro"]
