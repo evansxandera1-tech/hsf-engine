@@ -1,3 +1,4 @@
+import base64
 """
 HSF Engine — núcleo del generador de video (repo hsf-engine).
 
@@ -2736,17 +2737,17 @@ Título original: "{titulo}"
 Devolvé ÚNICAMENTE el título final, sin comillas, sin explicaciones."""
 
 
-PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA pregunta corta en español, en primera persona, estilo "¿Soy la mala por...?" o "¿Hice mal en...?" — el tipo de pregunta que alguien haría en un foro de confesiones para que otros opinen si actuó bien o mal.
+PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA frase corta, polémica y con gancho de clickbait en español, del tipo que se usa en el cartel rojo de una miniatura de YouTube — algo que genere debate y ganas de opinar en los comentarios (ej: "¿SOY LA MALA POR ESTO?", "LA VERDAD QUE NADIE QUISO CREERME", "ESTO DESTRUYÓ A TODA MI FAMILIA").
 
 Reglas:
-- Máximo 12 palabras.
-- Primera persona, tono de duda genuina, no exagerado.
+- Máximo 10 palabras.
+- Tono provocador/polémico, primera persona o afirmación directa (puede ser pregunta o no).
 - Sin inventar datos que no estén en el resumen.
 - Sin emojis, sin comillas.
 
 Resumen: "{resumen}"
 
-Devolvé ÚNICAMENTE la pregunta final, empezando con "¿" y terminando con "?", sin explicaciones."""
+Devolvé ÚNICAMENTE la frase final, sin explicaciones."""
 
 
 def _obtener_plantilla_intro_desde_drive(logger=None):
@@ -2780,7 +2781,7 @@ def _generar_pregunta_miniatura(resumen_texto, logger=None):
     versión de respaldo genérica a partir del resumen."""
     def _respaldo():
         base = " ".join(resumen_texto.split())[:70].rstrip()
-        return f"¿HICE MAL EN ESTA SITUACIÓN?"
+        return "LA HISTORIA QUE NADIE SE ATREVIÓ A CONTAR"
 
     if not GEMINI_API_KEY:
         return _respaldo()
@@ -2795,7 +2796,7 @@ def _generar_pregunta_miniatura(resumen_texto, logger=None):
         )
         resp.raise_for_status()
         pregunta = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
-        if not pregunta or "?" not in pregunta:
+        if not pregunta:
             return _respaldo()
         return pregunta.upper()
     except Exception as e:
@@ -3497,11 +3498,16 @@ def _subir_ultimo_resultado_a_youtube(logger):
         # plantilla.png), se usa esa en vez de sacar un frame del video:
         # mismo diseño siempre, solo cambia el título.
         ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
-        ok_miniatura = generar_miniatura_clickbait(
+        ok_miniatura = generar_miniatura_nueva(
             titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
             ruta_video_fondo=resultado["ruta_video"],
-            historia_completa=resultado.get("guion"),
         )
+        if not ok_miniatura:
+            ok_miniatura = generar_miniatura_clickbait(
+                titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
+                ruta_video_fondo=resultado["ruta_video"],
+                historia_completa=resultado.get("guion"),
+            )
         if not ok_miniatura and ruta_plantilla:
             ok_miniatura = generar_miniatura_plantilla(
                 titulo_para_imagen, ruta_plantilla, ruta_miniatura, logger=logger,
@@ -3587,3 +3593,247 @@ if __name__ == "__main__":
             print(f"=== ERROR subiendo a YouTube: {e} ===")
     else:
         print("=== No se subió a YouTube (corré con: python hsf_engine.py --subir) ===")
+
+
+# ============================================================
+# ---- Miniatura estilo foto (v1.0, integrada al pipeline) ----
+# Foto real de fondo (Pollinations/Nanobanana, sujeto en tercio
+# izquierdo) + logo HSF + titulo (fuente Anton) + cartel rojo con
+# el gancho. Es el PRIMER intento en la cadena de miniaturas; si algo
+# falla, cae a generar_miniatura_clickbait / plantilla / frame, como ya
+# estaba.
+# ============================================================
+
+
+# ============================================================
+# ---- Miniatura estilo foto (v1.0, integrada al pipeline) ----
+# Foto real de fondo (Pollinations/Nanobanana, sujeto en tercio
+# izquierdo) + logo HSF + titulo (fuente Anton) + cartel rojo con
+# el gancho. Es el PRIMER intento en la cadena de miniaturas; si algo
+# falla, cae a generar_miniatura (frame simple del video).
+# ============================================================
+POLLINATIONS_API_KEY = "sk_d0sZWK22FktH8fTlWbTU1RGpZrLKwSPU"
+POLLINATIONS_MODELO_IMAGEN = "nanobanana"
+
+
+def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, imagen_referencia=None):
+    """Genera SOLO la foto de fondo (sin texto, sin logo) a partir del
+    resumen de la historia: una persona en el tercio izquierdo, el resto
+    del cuadro oscuro/vacío para superponer texto después."""
+    prompt = (
+        "Foto realista, formato horizontal 16:9, estilo fotograma de "
+        "pelicula de suspenso/drama, pensada para generar morbo e intriga "
+        "en quien la ve (que quiera saber que paso). RECREA EL MOMENTO "
+        "EXACTO DE MAYOR TENSION de esta historia real -como si fuera el "
+        "segundo justo ANTES de una confrontacion o justo cuando se "
+        "descubre un secreto/una traicion-, con 2 o 3 PERSONAS (los "
+        "involucrados directos segun el resumen: la protagonista y la "
+        "otra/s persona/s con las que tiene el conflicto): "
+        + resumen_texto.strip()[:600] +
+        ". Miradas cargadas de tension/acusacion/culpa entre los personajes "
+        "(no mirando a camara), lenguaje corporal de secreto o confrontacion "
+        "(brazos cruzados, alguien dando la espalda, alguien tapandose la "
+        "cara, alguien mostrando algo en un celular o una foto sin que se "
+        "lea el contenido). La escena/las personas deben ocupar la MITAD "
+        "IZQUIERDA del cuadro; la mitad derecha queda oscura/fuera de "
+        "foco/vacia, para superponer texto despues. Iluminacion cinematica "
+        "oscura y dramatica, alto contraste, como en un thriller. NO "
+        "incluir ningun texto, letras, logos, marcas de agua, ni interfaz "
+        "de ningun tipo en la imagen."
+    )
+    cuerpo = {
+        "prompt": prompt, "model": POLLINATIONS_MODELO_IMAGEN,
+        "size": "1280x720", "response_format": "b64_json",
+    }
+    if imagen_referencia:
+        cuerpo["image"] = imagen_referencia
+    intentos_maximos, espera = 3, 5
+    for intento in range(1, intentos_maximos + 1):
+        try:
+            resp = requests.post(
+                "https://gen.pollinations.ai/v1/images/generations",
+                headers={"Authorization": f"Bearer {POLLINATIONS_API_KEY}"},
+                json=cuerpo, timeout=90,
+            )
+            if resp.status_code in (429, 503) and intento < intentos_maximos:
+                if logger:
+                    logger.warning(f"Pollinations {resp.status_code}, reintentando en {espera}s...")
+                time.sleep(espera); espera *= 2; continue
+            resp.raise_for_status()
+            datos_b64 = resp.json()["data"][0]["b64_json"]
+            with open(ruta_salida, "wb") as f:
+                f.write(base64.b64decode(datos_b64))
+            if logger:
+                logger.info(f"Ilustracion (estilo foto) generada: {ruta_salida}")
+            return ruta_salida
+        except Exception as e:
+            if intento >= intentos_maximos:
+                if logger:
+                    logger.warning(f"Fallo generar_ilustracion_pollinations tras {intentos_maximos} intentos: {e}")
+                return None
+            time.sleep(espera); espera *= 2
+    return None
+
+
+def _mf_buscar_fuente_condensada():
+    if not os.path.isdir(CARPETA_FUENTES):
+        return None
+    archivos = os.listdir(CARPETA_FUENTES)
+    if not archivos:
+        return None
+    for clave in ["black", "cond", "anton", "bebas", "impact", "bold"]:
+        for nombre in archivos:
+            if clave in nombre.lower():
+                return os.path.join(CARPETA_FUENTES, nombre)
+    return os.path.join(CARPETA_FUENTES, archivos[0])
+
+
+def _mf_envolver(texto, max_chars):
+    palabras = texto.split()
+    lineas, actual, largo = [], [], 0
+    for palabra in palabras:
+        if actual and largo + len(palabra) + 1 > max_chars:
+            lineas.append(" ".join(actual)); actual, largo = [], 0
+        actual.append(palabra); largo += len(palabra) + 1
+    if actual:
+        lineas.append(" ".join(actual))
+    return lineas
+
+
+def _mf_max_chars(fontsize, x_inicio, ancho_canvas, margen_derecho=25, factor=0.56):
+    ancho_disponible = ancho_canvas - x_inicio - margen_derecho
+    return max(int(ancho_disponible / (fontsize * factor)), 5)
+
+
+def _mf_armar_lineas_titulo(texto_titulo, x_titulo, ancho_canvas):
+    candidatos = [(72, 90), (64, 80), (56, 70), (48, 60), (41, 51), (34, 43), (28, 35), (24, 30)]
+    for tamano, alto_linea in candidatos:
+        max_chars = _mf_max_chars(tamano, x_titulo, ancho_canvas)
+        lineas = _mf_envolver(texto_titulo, max_chars)
+        if len(lineas) <= 5:
+            return lineas[:5], tamano, alto_linea
+    tamano, alto_linea = candidatos[-1]
+    max_chars = _mf_max_chars(tamano, x_titulo, ancho_canvas)
+    return _mf_envolver(texto_titulo, max_chars)[:5], tamano, alto_linea
+
+
+def _mf_escapar(texto):
+    return texto.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def generar_miniatura_estilo_foto(titulo, subtitulo, ruta_fondo, ruta_logo, ruta_salida, logger=None):
+    """Compone la miniatura final: foto de fondo + logo HSF + titulo
+    (fuente condensada/Anton, ultima linea amarilla) + cartel rojo con
+    el subtitulo (tambien envuelto en 1-2 lineas, nunca se sale del
+    cuadro). Todo el texto lo dibuja ffmpeg, nunca una IA."""
+    ancho_mini, alto_mini = 1280, 720
+    ruta_fuente = _mf_buscar_fuente_condensada()
+    fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
+
+    x_titulo = 570
+    texto_titulo = titulo.strip().upper()
+    lineas, tamano_titulo, alto_linea = _mf_armar_lineas_titulo(texto_titulo, x_titulo, ancho_mini)
+    y_titulo_inicio = 210 - max(0, len(lineas) - 3) * (alto_linea // 2)
+
+    dibujo_titulo = []
+    for i, linea in enumerate(lineas):
+        color = "yellow" if i == len(lineas) - 1 else "white"
+        y_pos = y_titulo_inicio + i * alto_linea
+        dibujo_titulo.append(
+            f"drawtext=text='{_mf_escapar(linea)}'{fontfile}:fontcolor={color}:fontsize={tamano_titulo}:"
+            f"borderw=3:bordercolor=black:x={x_titulo}:y={y_pos}"
+        )
+
+    texto_subtitulo = subtitulo.strip().upper()
+    ancho_max_cartel = ancho_mini - x_titulo - 25
+    tamano_subtitulo = 30
+    lineas_subtitulo = _mf_envolver(
+        texto_subtitulo, _mf_max_chars(tamano_subtitulo, 0, ancho_max_cartel, margen_derecho=40)
+    )
+    while len(lineas_subtitulo) > 2 and tamano_subtitulo > 18:
+        tamano_subtitulo -= 2
+        lineas_subtitulo = _mf_envolver(
+            texto_subtitulo, _mf_max_chars(tamano_subtitulo, 0, ancho_max_cartel, margen_derecho=40)
+        )
+    lineas_subtitulo = lineas_subtitulo[:2]
+
+    alto_linea_subtitulo = tamano_subtitulo + 14
+    alto_cartel = alto_linea_subtitulo * len(lineas_subtitulo) + 20
+    ancho_texto_max = max((len(l) for l in lineas_subtitulo), default=0)
+    ancho_cartel = int(min(ancho_max_cartel, max(220, ancho_texto_max * (tamano_subtitulo * 0.62) + 40)))
+    y_cartel = y_titulo_inicio + len(lineas) * alto_linea + 30
+
+    dibujos_texto_subtitulo = []
+    for j, linea_sub in enumerate(lineas_subtitulo):
+        y_linea = y_cartel + 15 + j * alto_linea_subtitulo
+        dibujos_texto_subtitulo.append(
+            f"drawtext=text='{_mf_escapar(linea_sub)}'{fontfile}:fontcolor=white:fontsize={tamano_subtitulo}:"
+            f"borderw=0:x={x_titulo + 20}:y={y_linea}"
+        )
+    dibujo_cartel = f"drawbox=x={x_titulo}:y={y_cartel}:w={ancho_cartel}:h={alto_cartel}:color=red@1.0:t=fill"
+    if dibujos_texto_subtitulo:
+        dibujo_cartel += "," + ",".join(dibujos_texto_subtitulo)
+
+    x_logo, y_logo, tamano_logo = 30, 25, 90
+    x_nombre, y_nombre = x_logo + tamano_logo + 15, y_logo + (tamano_logo // 2) - 20
+    dibujo_nombre = (
+        f"drawtext=text='HISTORIA SIN FILTRO'{fontfile}:fontcolor=white:fontsize=34:"
+        f"borderw=2:bordercolor=black:x={x_nombre}:y={y_nombre}"
+    )
+
+    cadena_texto = ",".join(dibujo_titulo) + f",{dibujo_cartel},{dibujo_nombre}"
+    filtro_complejo = (
+        f"[0:v]scale={ancho_mini}:{alto_mini}[fondo];"
+        f"[1:v]scale={tamano_logo}:{tamano_logo}[logo];"
+        f"[fondo][logo]overlay={x_logo}:{y_logo}[conlogo];"
+        f"[conlogo]{cadena_texto}[out]"
+    )
+    cmd = ["ffmpeg", "-y", "-i", ruta_fondo, "-i", ruta_logo,
+           "-filter_complex", filtro_complejo, "-map", "[out]", "-frames:v", "1", ruta_salida]
+    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
+        if logger:
+            logger.warning(f"No se pudo componer la miniatura estilo foto: {resultado.stderr[-800:]}")
+        return None
+    if logger:
+        logger.info(f"Miniatura estilo foto generada: {ruta_salida}")
+    return ruta_salida
+
+
+def generar_miniatura_nueva(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None):
+    """Wrapper: genera la foto de fondo con Pollinations y arma la
+    miniatura estilo foto. Si la foto falla, usa un frame del video como
+    respaldo. Devuelve la ruta si salio bien, o None (para que la cadena
+    de miniaturas en _subir_ultimo_resultado_a_youtube caiga al siguiente
+    metodo)."""
+    ruta_fondo = ruta_salida + ".fondo.png"
+    ruta_fondo_generada = generar_ilustracion_pollinations(resumen_texto, ruta_fondo, logger=logger)
+
+    if not ruta_fondo_generada and ruta_video_fondo and os.path.exists(ruta_video_fondo):
+        ruta_fondo_generada = ruta_salida + ".fondo_frame.jpg"
+        try:
+            duracion = obtener_duracion_audio(ruta_video_fondo)
+        except Exception:
+            duracion = 10.0
+        instante = min(max(2.0, duracion * 0.15), duracion - 1 if duracion > 1 else 0)
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(instante), "-i", ruta_video_fondo,
+             "-vf", "scale=1280:720", "-frames:v", "1", ruta_fondo_generada],
+            capture_output=True,
+        )
+        if not os.path.exists(ruta_fondo_generada):
+            ruta_fondo_generada = None
+
+    if not ruta_fondo_generada:
+        if logger:
+            logger.warning("generar_miniatura_nueva: no hay foto de fondo ni frame de respaldo.")
+        return None
+
+    subtitulo = _generar_pregunta_miniatura(resumen_texto, logger=logger)
+    if not subtitulo or not subtitulo.strip():
+        subtitulo = resumen_texto.strip()[:90]
+    ruta_logo = os.path.join(CARPETA_BASE, "assets", "logo_hsf.png")
+
+    return generar_miniatura_estilo_foto(
+        titulo_miniatura, subtitulo, ruta_fondo_generada, ruta_logo, ruta_salida, logger=logger,
+    )
