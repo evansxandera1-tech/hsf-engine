@@ -53,7 +53,7 @@ jobs:
           logger.setLevel(logging.INFO)
 
           subprocess.run([
-              "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1080x1920:d=30",
+              "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:d=30",
               "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
               "-shortest", "-c:v", "libx264", "-c:a", "aac", "video_prueba_30s.mp4",
           ], check=True)
