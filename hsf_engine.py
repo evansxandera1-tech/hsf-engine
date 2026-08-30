@@ -2427,9 +2427,11 @@ def procesar_todo(texto_bruto, frases_por_bloque, posicion, color_sub, tamano_su
         # simplemente queda sin esa intro.
         ruta_plantilla_intro = _obtener_plantilla_miniatura_desde_drive(logger=logger)
         if ruta_plantilla_intro:
-            resumen_intro = " ".join(texto_bruto.split())[:160]
+            resumen_intro = " ".join(texto_bruto.split())[:100]
+            if " " in resumen_intro:
+                resumen_intro = resumen_intro.rsplit(" ", 1)[0]
             ruta_con_intro = ruta_final + ".intro.mp4"
-            ok_intro = agregar_intro_resumen(ruta_final, ruta_plantilla_intro, resumen_intro, ruta_con_intro, logger=logger)
+            ok_intro = agregar_intro_resumen(ruta_final, ruta_plantilla_intro, resumen_intro, ruta_con_intro, duracion_intro=12.0, logger=logger)
             if ok_intro:
                 os.replace(ruta_con_intro, ruta_final)
 
@@ -3314,43 +3316,47 @@ def generar_miniatura_plantilla(titulo_miniatura, ruta_plantilla, ruta_salida, l
     return ruta_salida
 
 
-def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida, duracion_intro=4.0, logger=None):
+def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida, duracion_intro=12.0, logger=None):
     """Superpone la misma tarjeta de la miniatura, con un resumen corto,
     durante los primeros segundos del video final (encima del gameplay
     que ya está sonando/moviéndose, sin cortar ni retrasar el audio)."""
-    texto = resumen_texto.strip()
-    if len(texto) > 160:
-        texto = texto[:159].rstrip() + "…"
-    palabras = texto.split()
-    lineas, actual, largo = [], [], 0
-    max_chars_linea = 34
-    for palabra in palabras:
-        if actual and largo + len(palabra) + 1 > max_chars_linea:
-            lineas.append(" ".join(actual))
-            actual, largo = [], 0
-        actual.append(palabra)
-        largo += len(palabra) + 1
-    if actual:
-        lineas.append(" ".join(actual))
-    lineas = lineas[:5]
+    texto = resumen_texto.strip().upper()
+    if len(texto) > 100:
+        texto = texto[:100].rstrip()
+        if " " in texto:
+            texto = texto.rsplit(" ", 1)[0]
+        texto += "…"
 
     nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
     ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
     if not os.path.exists(ruta_fuente):
         ruta_fuente = None
+    fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
+
+    ancho_texto_disponible = int(RESOLUCION_ANCHO * 0.72)
+    candidatos = [(32, 38), (28, 34), (24, 29), (20, 25), (17, 21)]
+    lineas, tamano_texto, alto_linea = None, None, None
+    for tamano, alto in candidatos:
+        max_chars = _mf_max_chars(tamano, 0, ancho_texto_disponible, margen_derecho=0)
+        prueba = _mf_envolver(texto, max_chars)
+        if len(prueba) <= 3:
+            lineas, tamano_texto, alto_linea = prueba[:3], tamano, alto
+            break
+    if lineas is None:
+        tamano_texto, alto_linea = candidatos[-1]
+        max_chars = _mf_max_chars(tamano_texto, 0, ancho_texto_disponible, margen_derecho=0)
+        lineas = _mf_envolver(texto, max_chars)[:3]
 
     centro_y = 310
-    alto_linea = 38
     y_inicio = centro_y - (len(lineas) * alto_linea) // 2
     ventana = f"between(t,0,{duracion_intro})"
 
     dibujo_texto = []
     for i, linea in enumerate(lineas):
-        linea_escapada = linea.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
+        linea_escapada = _mf_escapar(linea)
         y_pos = y_inicio + i * alto_linea
         dibujo_texto.append(
-            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize=32:"
+            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize={tamano_texto}:"
             f"x=(w-text_w)/2:y={y_pos}:enable='{ventana}'"
         )
     cadena_texto = ",".join(dibujo_texto)
