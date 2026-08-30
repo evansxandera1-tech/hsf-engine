@@ -1,0 +1,93 @@
+name: Produccion HSF (video real automatico, 2x al dia)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # 5:00 AM y 19:00 (7pm) hora Peru (UTC-5) = 10:00 y 00:00 UTC
+    - cron: "0 10 * * *"
+    - cron: "0 0 * * *"
+
+jobs:
+  produccion:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instalar rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configurar rclone (credenciales de Drive)
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+      - name: Instalar dependencias de Python
+        run: pip install -r requirements.txt
+
+      - name: Generar video real (texto de Drive + gameplay) + subir a YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HSF_PRIVACIDAD_YOUTUBE: "unlisted"
+        run: |
+          python3 << 'PYEOF'
+          import logging
+          import os
+          import hsf_engine
+          from hsf_engine import (
+              procesar_todo, _elegir_texto_desde_drive, _elegir_gameplay_desde_drive,
+              _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
+              FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              VELOCIDAD_EFECTO_POR_DEFECTO,
+          )
+
+          logger = logging.getLogger("produccion")
+          logger.addHandler(logging.StreamHandler())
+          logger.setLevel(logging.INFO)
+
+          guion = _elegir_texto_desde_drive(logger=logger)
+          if not guion:
+              raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
+
+          ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
+          if not ruta_gameplay:
+              raise RuntimeError("No se encontro gameplay disponible en gameplay_slither.")
+
+          procesar_todo(
+              guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
+              False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
+              efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
+              fondo_gameplay=True, ruta_gameplay=ruta_gameplay,
+              logger=logger, ruta_log=None,
+          )
+
+          with CANDADO_ESTADO:
+              resultado = dict(ESTADO.get("resultado") or {})
+          if not resultado.get("video"):
+              raise RuntimeError(f"El pipeline de video fallo: {resultado.get('mensaje', 'sin detalle')}")
+
+          ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado["video"])
+          print("Video generado en:", ruta_video_absoluta)
+
+          hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
+              "ruta_video": ruta_video_absoluta,
+              "titulo_resumen": resultado.get("titulo") or "Video generado automaticamente",
+              "subreddits": [],
+              "cantidad_historias": 1,
+              "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
+          }
+
+          _subir_ultimo_resultado_a_youtube(logger)
+          PYEOF
