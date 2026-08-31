@@ -51,23 +51,41 @@ jobs:
               {"titular": "EL SECRETO DE MI ABUELA", "franja": "SALIO A LA LUZ"},
           ]
 
+          generadas = 0
+          fallidas = 0
+
           for i, caso in enumerate(casos, start=1):
               prompt = base.format(**caso)
-              resp = requests.post(
-                  "https://gen.pollinations.ai/v1/images/generations",
-                  headers={
-                      "Authorization": f"Bearer {os.environ['POLLINATIONS_API_KEY']}",
-                      "Content-Type": "application/json",
-                  },
-                  json={"model": "nanobanana-pro", "prompt": prompt, "size": "1280x720"},
-                  timeout=120,
-              )
-              print(f"[{i}] Status:", resp.status_code)
-              data = resp.json()
-              b64 = data["data"][0]["b64_json"]
-              with open(f"miniatura_{i}.png", "wb") as f:
-                  f.write(base64.b64decode(b64))
-              print(f"Guardada miniatura_{i}.png")
+              try:
+                  resp = requests.post(
+                      "https://gen.pollinations.ai/v1/images/generations",
+                      headers={
+                          "Authorization": f"Bearer {os.environ['POLLINATIONS_API_KEY']}",
+                          "Content-Type": "application/json",
+                      },
+                      json={"model": "nanobanana-pro", "prompt": prompt, "size": "1280x720"},
+                      timeout=120,
+                  )
+                  print(f"[{i}] Status:", resp.status_code)
+
+                  if resp.status_code != 200:
+                      print(f"[{i}] Fallo (status {resp.status_code}): {resp.text[:300]}")
+                      fallidas += 1
+                      continue
+
+                  data = resp.json()
+                  b64 = data["data"][0]["b64_json"]
+                  with open(f"miniatura_{i}.png", "wb") as f:
+                      f.write(base64.b64decode(b64))
+                  print(f"[{i}] Guardada miniatura_{i}.png")
+                  generadas += 1
+
+              except Exception as e:
+                  print(f"[{i}] Error inesperado: {e}")
+                  fallidas += 1
+                  continue
+
+          print(f"Resumen: {generadas} generadas, {fallidas} fallidas de {len(casos)} totales")
           PYEOF
 
       - name: Subir miniaturas como artifacts
@@ -75,3 +93,4 @@ jobs:
         with:
           name: miniaturas-prueba
           path: miniatura_*.png
+        if: always()
