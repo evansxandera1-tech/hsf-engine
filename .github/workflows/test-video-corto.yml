@@ -1,0 +1,156 @@
+name: Test video corto (2 min, prueba puntual)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  test_video_corto:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instalar rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configurar rclone (credenciales de Drive)
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+      - name: Instalar dependencias de Python
+        run: pip install -r requirements.txt
+
+      - name: Generar video de prueba (resumido a ~2 min) + subir a YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+          HSF_PRIVACIDAD_YOUTUBE: "unlisted"
+        run: |
+          python3 << 'PYEOF'
+          import logging
+          import os
+          import subprocess
+          import requests
+          import hsf_engine
+          from hsf_engine import (
+              procesar_todo, _elegir_texto_desde_drive, _marcar_texto_usado_en_drive,
+              _elegir_gameplay_desde_drive,
+              _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
+              FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              VELOCIDAD_EFECTO_POR_DEFECTO, GEMINI_API_KEY, GEMINI_MODELO,
+          )
+
+          logger = logging.getLogger("test_video_corto")
+          logger.addHandler(logging.StreamHandler())
+          logger.setLevel(logging.INFO)
+
+          guion, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
+          if not guion:
+              raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
+
+          # ---- Resumir la historia completa a ~2 minutos narrados (solo prueba) ----
+          guion_original = guion
+          if GEMINI_API_KEY:
+              prompt_resumen = (
+                  "Resumi la siguiente historia real narrada en primera persona, "
+                  "manteniendo el mismo estilo, tono y persona narrativa (no cambies "
+                  "'yo' por 'ella/el'), conservando el inicio, el conflicto principal, "
+                  "el giro/revelacion mas importante y el cierre. El resultado debe "
+                  "poder narrarse en voz alta en aproximadamente 2 minutos (apuntá a "
+                  "unas 280-320 palabras). No agregues comentarios ni titulos, "
+                  "devolve SOLO el texto resumido de la historia.\n\n"
+                  f"HISTORIA ORIGINAL:\n{guion_original.strip()[:6000]}"
+              )
+              try:
+                  resp = requests.post(
+                      f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+                      params={"key": GEMINI_API_KEY},
+                      json={"contents": [{"parts": [{"text": prompt_resumen}]}]},
+                      timeout=60,
+                  )
+                  resp.raise_for_status()
+                  guion_resumido = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                  if guion_resumido:
+                      guion = guion_resumido
+                      print(f"Guion resumido: {len(guion_original.split())} palabras -> {len(guion.split())} palabras")
+                  else:
+                      print("Gemini no devolvio texto, se usa el guion original completo")
+              except Exception as e:
+                  print(f"Fallo al resumir con Gemini, se usa el guion original completo: {e}")
+          else:
+              print("GEMINI_API_KEY vacia, se usa el guion original completo (sin resumir)")
+
+          ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
+          if not ruta_gameplay:
+              raise RuntimeError("No se encontro gameplay disponible en gameplay_slither.")
+
+          procesar_todo(
+              guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
+              False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
+              efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
+              fondo_gameplay=True, ruta_gameplay=ruta_gameplay,
+              logger=logger, ruta_log=None,
+          )
+
+          with CANDADO_ESTADO:
+              resultado = dict(ESTADO.get("resultado") or {})
+          if not resultado.get("video"):
+              raise RuntimeError(f"El pipeline de video fallo: {resultado.get('mensaje', 'sin detalle')}")
+
+          ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado["video"])
+          print("Video generado en:", ruta_video_absoluta)
+
+          # ---- Respaldo: si aun asi quedo mas largo de 2 min, se recorta duro ----
+          cmd_duracion = [
+              "ffprobe", "-v", "error", "-show_entries", "format=duration",
+              "-of", "default=noprint_wrappers=1:nokey=1", ruta_video_absoluta,
+          ]
+          duracion_actual = 0.0
+          try:
+              duracion_actual = float(subprocess.run(cmd_duracion, capture_output=True, text=True).stdout.strip())
+          except Exception:
+              pass
+          print(f"Duracion del video generado: {duracion_actual:.1f}s")
+
+          if duracion_actual > 125:
+              ruta_video_recortado = ruta_video_absoluta + ".recortado.mp4"
+              cmd_recorte = [
+                  "ffmpeg", "-y", "-i", ruta_video_absoluta,
+                  "-t", "120", "-c", "copy", ruta_video_recortado,
+              ]
+              resultado_recorte = subprocess.run(cmd_recorte, capture_output=True, text=True)
+              if resultado_recorte.returncode != 0 or not os.path.exists(ruta_video_recortado):
+                  cmd_recorte = ["ffmpeg", "-y", "-i", ruta_video_absoluta, "-t", "120", ruta_video_recortado]
+                  resultado_recorte = subprocess.run(cmd_recorte, capture_output=True, text=True)
+              if resultado_recorte.returncode == 0 and os.path.exists(ruta_video_recortado):
+                  os.replace(ruta_video_recortado, ruta_video_absoluta)
+                  print("El resumen se paso de largo, se aplico recorte duro a 2 minutos como respaldo.")
+              else:
+                  print(f"No se pudo aplicar el recorte de respaldo: {resultado_recorte.stderr[-500:]}")
+          else:
+              print("El video ya quedo dentro de los 2 minutos gracias al resumen, no hizo falta recortar.")
+
+          hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
+              "ruta_video": ruta_video_absoluta,
+              "titulo_resumen": resultado.get("titulo") or "Video de prueba (2 min)",
+              "subreddits": [],
+              "cantidad_historias": 1,
+              "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
+          }
+
+          _subir_ultimo_resultado_a_youtube(logger)
+          _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger)
+          PYEOF
