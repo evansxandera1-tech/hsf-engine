@@ -12,18 +12,24 @@ jobs:
           POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
         run: |
           python3 << 'PYEOF'
-          import os, requests, base64, json
+          import os, requests, base64
 
           prompt = (
-              "Miniatura de YouTube estilo tarjeta dividida en dos mitades verticales. "
-              "Mitad izquierda: imagen fotorrealista de dos personas confrontandose en una discusion familiar tensa, "
-              "estilo dramatico, iluminacion de cine. "
-              "Mitad derecha: tarjeta de fondo blanco con un logo circular rojo/bordo arriba a la izquierda con el texto 'HSF', "
-              "junto al nombre 'Historias Sin Filtro' con un check de verificacion azul, "
-              "y debajo, en letras negras grandes en mayuscula, centrado, el texto exacto: "
-              "\"¿HICE MAL EN DEFENDER A MI HERMANA?\" "
-              "Borde rojo grueso alrededor de toda la imagen y una linea roja vertical separando ambas mitades. "
-              "Resolucion 1280x720, estilo miniatura de YouTube clickbait pero de buen gusto."
+              "Miniatura de YouTube fotorrealista, una sola imagen a pantalla completa "
+              "(sin paneles ni tarjetas separadas), mostrando dos personas confrontandose "
+              "en una discusion familiar tensa dentro de una casa, iluminacion dramatica de cine, "
+              "con un degradado oscuro semitransparente que cubre la parte superior e inferior de la imagen "
+              "para que el texto se lea bien encima de la foto. "
+              "Arriba a la izquierda, chico: un logo circular rojo/bordo con las letras 'HSF' "
+              "y al lado el texto blanco 'Historia Sin Filtro'. "
+              "Debajo de eso, ocupando la parte superior, un titular en mayuscula, fuente gruesa tipo impact, "
+              "color blanco con la palabra 'HERENCIA' en amarillo, texto exacto: "
+              "'MI HERMANO ME ACUSO DE ARRUINAR LA HERENCIA DE MIS ABUELOS'. "
+              "Abajo del todo, una franja roja solida de ancho completo con texto blanco en mayuscula: "
+              "'LA HISTORIA QUE NADIE SE ATREVIO A CONTAR'. "
+              "Estilo miniatura de YouTube clickbait de historias reales, sin marco ni borde de color, "
+              "sin panel blanco, todo el texto quemado directamente sobre la foto. "
+              "Resolucion 1280x720."
           )
 
           resp = requests.post(
