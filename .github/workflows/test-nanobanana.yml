@@ -16,49 +16,39 @@ jobs:
 
           base = (
               "Miniatura de YouTube fotorrealista, una sola imagen a pantalla completa "
-              "(sin paneles ni tarjetas separadas), mostrando {escena} dentro de una casa, "
-              "iluminacion dramatica de cine tipo thriller, con sombras marcadas y un tono de color "
-              "frio/desaturado que genere tension, con un degradado oscuro semitransparente que cubre "
-              "la parte superior e inferior de la imagen para que el texto se lea bien encima de la foto. "
-              "Arriba a la izquierda, chico: un logo circular rojo/bordo con las letras 'HSF' "
-              "y al lado el texto blanco 'Historia Sin Filtro'. "
+              "(sin paneles ni tarjetas separadas). Analiza el titular y la frase de la franja roja "
+              "que se muestran abajo, interpreta de que trata el conflicto, y genera una escena "
+              "fotorrealista que represente ese conflicto de forma dramatica: si el texto sugiere una "
+              "confrontacion directa entre dos personas (traicion, pelea, acusacion), muestra 2 personas "
+              "cara a cara; si el texto sugiere un conflicto con un tercero involucrado, muestra 3 personas "
+              "con roles claros; si el texto sugiere un descubrimiento o momento intimo y solitario, "
+              "muestra 1 sola persona en primer plano. "
+              "La escena debe ser SIEMPRE en primer plano o medio plano, con el/los rostro(s) ocupando "
+              "gran parte del frame (nunca personas chicas o lejanas). Debe ocurrir dentro de una casa, "
+              "con iluminacion dramatica de cine tipo thriller usando siempre luz lateral proveniente de "
+              "una ventana, sombras marcadas, y SIEMPRE el mismo tono de color frio/desaturado con tinte "
+              "azulado en las sombras, para mantener identidad visual consistente entre miniaturas. "
+              "Expresiones faciales de dolor, ira contenida o shock genuino (no actuadas). Con un degradado "
+              "oscuro semitransparente que cubre la parte superior e inferior de la imagen para que el "
+              "texto se lea bien encima de la foto. "
+              "Arriba a la izquierda, chico: un logo circular rojo/bordo con las letras 'HSF' y al lado el "
+              "texto blanco 'Historia Sin Filtro', SIEMPRE del mismo tamano y posicion exacta. "
               "Debajo de eso, ocupando la parte superior, un titular en mayuscula, fuente gruesa tipo impact, "
-              "color blanco con la ultima palabra en amarillo, texto exacto: '{titular}'. "
-              "Abajo del todo, una franja roja solida de ancho completo con texto blanco en mayuscula: '{franja}'. "
-              "La expresion facial de los personajes debe transmitir dolor, ira contenida o shock genuino "
-              "(no actuada), primer plano cercano a los rostros para generar conexion emocional inmediata. "
+              "SIEMPRE color blanco con la ultima palabra clave en amarillo, texto exacto: '{titular}'. "
+              "Abajo del todo, SIEMPRE una franja roja solida (mismo tono de rojo) de ancho completo con "
+              "texto blanco en mayuscula: '{franja}'. "
               "Estilo miniatura de YouTube clickbait de historias reales tipo true crime/drama familiar, "
-              "sin marco ni borde de color, sin panel blanco, todo el texto quemado directamente sobre la foto, "
-              "letras grandes con buen espacio entre lineas para que no se pisen entre si. "
+              "sin marco ni borde de color, sin panel blanco, todo el texto quemado directamente sobre la "
+              "foto, letras grandes con buen espacio entre lineas para que no se pisen entre si. "
               "Resolucion 1280x720."
           )
 
           casos = [
-              {
-                  "escena": "una mujer joven y fria mirando de reojo mientras cuenta billetes sobre una mesa",
-                  "titular": "MI HERMANA ME TRAICIONO",
-                  "franja": "POR DINERO",
-              },
-              {
-                  "escena": "un primer plano de manos temblorosas sosteniendo un documento, rostro desenfocado de fondo con expresion de shock",
-                  "titular": "ENCONTRE EL TESTAMENTO",
-                  "franja": "Y TODO CAMBIO",
-              },
-              {
-                  "escena": "un hombre mayor firmando un papel mientras una mujer joven lo mira con la boca abierta, en shock",
-                  "titular": "MI HERENCIA DESAPARECIO",
-                  "franja": "NADIE QUISO EXPLICARME POR QUE",
-              },
-              {
-                  "escena": "una mujer sola con maletas frente a la puerta cerrada de una casa",
-                  "titular": "ME ECHARON DE LA FAMILIA",
-                  "franja": "POR DECIR LA VERDAD",
-              },
-              {
-                  "escena": "una mujer mayor sentada sola mirando una foto vieja, luz calida pero rostro triste",
-                  "titular": "EL SECRETO DE MI ABUELA",
-                  "franja": "SALIO A LA LUZ",
-              },
+              {"titular": "MI HERMANA ME TRAICIONO", "franja": "POR DINERO"},
+              {"titular": "ENCONTRE EL TESTAMENTO", "franja": "Y TODO CAMBIO"},
+              {"titular": "MI HERENCIA DESAPARECIO", "franja": "NADIE QUISO EXPLICARME POR QUE"},
+              {"titular": "ME ECHARON DE LA FAMILIA", "franja": "POR DECIR LA VERDAD"},
+              {"titular": "EL SECRETO DE MI ABUELA", "franja": "SALIO A LA LUZ"},
           ]
 
           for i, caso in enumerate(casos, start=1):
