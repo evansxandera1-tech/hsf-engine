@@ -1,0 +1,101 @@
+name: Demo real 2 min (todo el pipeline, disparo manual)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  demo_real:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instalar rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configurar rclone (credenciales de Drive)
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+      - name: Instalar dependencias de Python
+        run: pip install -r requirements.txt
+
+      - name: Generar video real recortado a 2 min + subir a YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HSF_PRIVACIDAD_YOUTUBE: "unlisted"
+        run: |
+          python3 << 'PYEOF'
+          import logging
+          import os
+          import hsf_engine
+          from hsf_engine import (
+              procesar_todo, _elegir_texto_desde_drive, _marcar_texto_usado_en_drive,
+              _elegir_gameplay_desde_drive,
+              _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
+              FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              VELOCIDAD_EFECTO_POR_DEFECTO,
+          )
+
+          logger = logging.getLogger("demo_real")
+          logger.addHandler(logging.StreamHandler())
+          logger.setLevel(logging.INFO)
+
+          guion, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
+          if not guion:
+              raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
+
+          MAX_PALABRAS = 300
+          palabras = guion.split()
+          if len(palabras) > MAX_PALABRAS:
+              recorte = " ".join(palabras[:MAX_PALABRAS])
+              fin = max(recorte.rfind("."), recorte.rfind("!"), recorte.rfind("?"))
+              if fin > 0:
+                  recorte = recorte[:fin + 1]
+              guion = recorte
+              logger.info("Guion recortado a ~2 min para la prueba (%s palabras originales).", len(palabras))
+
+          ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
+          if not ruta_gameplay:
+              raise RuntimeError("No se encontro gameplay disponible en gameplay_slither.")
+
+          procesar_todo(
+              guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
+              False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
+              opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
+              efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
+              fondo_gameplay=True, ruta_gameplay=ruta_gameplay,
+              logger=logger, ruta_log=None,
+          )
+
+          with CANDADO_ESTADO:
+              resultado = dict(ESTADO.get("resultado") or {})
+          if not resultado.get("video"):
+              raise RuntimeError(f"El pipeline de video fallo: {resultado.get('mensaje', 'sin detalle')}")
+
+          ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado["video"])
+          print("Video generado en:", ruta_video_absoluta)
+
+          hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
+              "ruta_video": ruta_video_absoluta,
+              "titulo_resumen": resultado.get("titulo") or "Video demo 2 min",
+              "subreddits": [],
+              "cantidad_historias": 1,
+              "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
+          }
+
+          _subir_ultimo_resultado_a_youtube(logger)
+          _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger)
+          PYEOF
