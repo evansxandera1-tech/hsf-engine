@@ -3659,7 +3659,7 @@ if __name__ == "__main__":
 # el gancho. Es el PRIMER intento en la cadena de miniaturas; si algo
 # falla, cae a generar_miniatura (frame simple del video).
 # ============================================================
-POLLINATIONS_API_KEY = "sk_d0sZWK22FktH8fTlWbTU1RGpZrLKwSPU"
+POLLINATIONS_API_KEY = os.environ.get("POLLINATIONS_API_KEY")
 POLLINATIONS_MODELO_IMAGEN = "nanobanana"
 
 

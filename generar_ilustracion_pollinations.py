@@ -1,31 +1,35 @@
+import os
 import base64
 import sys
 import time
 
 import requests
 
-POLLINATIONS_API_KEY = "sk_d0sZWK22FktH8fTlWbTU1RGpZrLKwSPU"
+POLLINATIONS_API_KEY = os.environ.get("POLLINATIONS_API_KEY")
 POLLINATIONS_MODELO_IMAGEN = "nanobanana"
 
 
 def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, imagen_referencia=None):
-    """Genera una ilustracion de fondo (estilo comic simple y oscuro, en dos
-    escenas apiladas) a partir del resumen de la historia, usando Nanobanana
-    via Pollinations. Si se pasa imagen_referencia (una URL, o varias
-    separadas por '|' o ','), el modelo la usa como referencia de estilo o
-    personaje. Devuelve la ruta local del PNG generado, o None si falla."""
+    """Genera SOLO la foto de fondo (sin texto, sin logo, sin cartel) a
+    partir del resumen de la historia, usando Nanobanana via Pollinations.
+    Deja el tercio izquierdo del cuadro con el sujeto y el resto oscuro,
+    para superponer despues el titulo con ffmpeg drawtext. Devuelve la
+    ruta local del PNG generado, o None si falla."""
     prompt = (
-        "Ilustracion digital estilo comic simple y oscuro, formato vertical, "
-        "dividida en dos escenas apiladas separadas por una linea blanca, "
-        "representando visualmente esta historia real (SIN texto escrito "
-        "dentro de la imagen, sin logos ni marcas de agua): "
+        "Foto realista de primer plano, formato horizontal 16:9, de una "
+        "persona con expresion angustiada/triste relacionada con esta "
+        "historia real, iluminacion cinematica oscura y dramatica. La "
+        "persona ocupa el tercio IZQUIERDO del cuadro; el resto del cuadro "
+        "(centro y derecha) queda oscuro/fuera de foco, vacio, para "
+        "superponer texto despues. NO incluir ningun texto, letras, logos, "
+        "marcas de agua, ni interfaz de ningun tipo en la imagen: "
         + resumen_texto.strip()[:600]
     )
 
     cuerpo = {
         "prompt": prompt,
         "model": POLLINATIONS_MODELO_IMAGEN,
-        "size": "1024x1024",
+        "size": "1280x720",
         "response_format": "b64_json",
     }
     if imagen_referencia:
