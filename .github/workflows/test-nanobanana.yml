@@ -7,51 +7,81 @@ jobs:
   test_nanobanana:
     runs-on: ubuntu-latest
     steps:
-      - name: Generar miniatura de prueba con nanobanana-pro
+      - name: Generar 5 miniaturas de prueba con nanobanana-pro
         env:
           POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
         run: |
           python3 << 'PYEOF'
           import os, requests, base64
 
-          prompt = (
+          base = (
               "Miniatura de YouTube fotorrealista, una sola imagen a pantalla completa "
-              "(sin paneles ni tarjetas separadas), mostrando dos personas confrontandose "
-              "en una discusion familiar tensa dentro de una casa, iluminacion dramatica de cine, "
-              "con un degradado oscuro semitransparente que cubre la parte superior e inferior de la imagen "
-              "para que el texto se lea bien encima de la foto. "
+              "(sin paneles ni tarjetas separadas), mostrando {escena} dentro de una casa, "
+              "iluminacion dramatica de cine tipo thriller, con sombras marcadas y un tono de color "
+              "frio/desaturado que genere tension, con un degradado oscuro semitransparente que cubre "
+              "la parte superior e inferior de la imagen para que el texto se lea bien encima de la foto. "
               "Arriba a la izquierda, chico: un logo circular rojo/bordo con las letras 'HSF' "
               "y al lado el texto blanco 'Historia Sin Filtro'. "
               "Debajo de eso, ocupando la parte superior, un titular en mayuscula, fuente gruesa tipo impact, "
-              "color blanco con la palabra 'HERENCIA' en amarillo, texto exacto: "
-              "'MI HERMANO ME ACUSO DE ARRUINAR LA HERENCIA DE MIS ABUELOS'. "
-              "Abajo del todo, una franja roja solida de ancho completo con texto blanco en mayuscula: "
-              "'LA HISTORIA QUE NADIE SE ATREVIO A CONTAR'. "
-              "Estilo miniatura de YouTube clickbait de historias reales, sin marco ni borde de color, "
-              "sin panel blanco, todo el texto quemado directamente sobre la foto. "
+              "color blanco con la ultima palabra en amarillo, texto exacto: '{titular}'. "
+              "Abajo del todo, una franja roja solida de ancho completo con texto blanco en mayuscula: '{franja}'. "
+              "La expresion facial de los personajes debe transmitir dolor, ira contenida o shock genuino "
+              "(no actuada), primer plano cercano a los rostros para generar conexion emocional inmediata. "
+              "Estilo miniatura de YouTube clickbait de historias reales tipo true crime/drama familiar, "
+              "sin marco ni borde de color, sin panel blanco, todo el texto quemado directamente sobre la foto, "
+              "letras grandes con buen espacio entre lineas para que no se pisen entre si. "
               "Resolucion 1280x720."
           )
 
-          resp = requests.post(
-              "https://gen.pollinations.ai/v1/images/generations",
-              headers={
-                  "Authorization": f"Bearer {os.environ['POLLINATIONS_API_KEY']}",
-                  "Content-Type": "application/json",
+          casos = [
+              {
+                  "escena": "una mujer joven y fria mirando de reojo mientras cuenta billetes sobre una mesa",
+                  "titular": "MI HERMANA ME TRAICIONO",
+                  "franja": "POR DINERO",
               },
-              json={"model": "nanobanana-pro", "prompt": prompt, "size": "1280x720"},
-              timeout=120,
-          )
-          print("Status:", resp.status_code)
-          data = resp.json()
+              {
+                  "escena": "un primer plano de manos temblorosas sosteniendo un documento, rostro desenfocado de fondo con expresion de shock",
+                  "titular": "ENCONTRE EL TESTAMENTO",
+                  "franja": "Y TODO CAMBIO",
+              },
+              {
+                  "escena": "un hombre mayor firmando un papel mientras una mujer joven lo mira con la boca abierta, en shock",
+                  "titular": "MI HERENCIA DESAPARECIO",
+                  "franja": "NADIE QUISO EXPLICARME POR QUE",
+              },
+              {
+                  "escena": "una mujer sola con maletas frente a la puerta cerrada de una casa",
+                  "titular": "ME ECHARON DE LA FAMILIA",
+                  "franja": "POR DECIR LA VERDAD",
+              },
+              {
+                  "escena": "una mujer mayor sentada sola mirando una foto vieja, luz calida pero rostro triste",
+                  "titular": "EL SECRETO DE MI ABUELA",
+                  "franja": "SALIO A LA LUZ",
+              },
+          ]
 
-          b64 = data["data"][0]["b64_json"]
-          with open("miniatura_prueba.png", "wb") as f:
-              f.write(base64.b64decode(b64))
-          print("Guardada miniatura_prueba.png")
+          for i, caso in enumerate(casos, start=1):
+              prompt = base.format(**caso)
+              resp = requests.post(
+                  "https://gen.pollinations.ai/v1/images/generations",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['POLLINATIONS_API_KEY']}",
+                      "Content-Type": "application/json",
+                  },
+                  json={"model": "nanobanana-pro", "prompt": prompt, "size": "1280x720"},
+                  timeout=120,
+              )
+              print(f"[{i}] Status:", resp.status_code)
+              data = resp.json()
+              b64 = data["data"][0]["b64_json"]
+              with open(f"miniatura_{i}.png", "wb") as f:
+                  f.write(base64.b64decode(b64))
+              print(f"Guardada miniatura_{i}.png")
           PYEOF
 
-      - name: Subir miniatura como artifact
+      - name: Subir miniaturas como artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: miniatura-prueba
-          path: miniatura_prueba.png
+          name: miniaturas-prueba
+          path: miniatura_*.png
