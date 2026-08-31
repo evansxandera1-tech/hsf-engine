@@ -58,7 +58,7 @@ for _c in [CARPETA_TEXTOS_LISTOS, CARPETA_GAMEPLAY_LOCAL]:
     os.makedirs(_c, exist_ok=True)
 
 for c in [CARPETA_SALIDA, CARPETA_VIDEOS, CARPETA_IMAGENES_SUBIDAS, CARPETA_IMAGENES_STOCK,
-          CARPETA_MUSICA, CARPETA_FUENTES, CARPETA_LOGS, CARPETA_PREVIEWS_VOZ, CARPETA_PRUEBAS_AUDIO_REDDIT]:
+          CARPETA_MUSICA, CARPETA_FUENTES, CARPETA_LOGS, CARPETA_PREVIEWS_VOZ]:
     os.makedirs(c, exist_ok=True)
 
 # Todo lo que se copia al celular (audio, video, logs) va dentro de esta
