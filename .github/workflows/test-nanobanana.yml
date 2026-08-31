@@ -1,0 +1,51 @@
+name: Test miniatura nanobanana
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  test_nanobanana:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generar miniatura de prueba con nanobanana-pro
+        env:
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import os, requests, base64, json
+
+          prompt = (
+              "Miniatura de YouTube estilo tarjeta dividida en dos mitades verticales. "
+              "Mitad izquierda: imagen fotorrealista de dos personas confrontandose en una discusion familiar tensa, "
+              "estilo dramatico, iluminacion de cine. "
+              "Mitad derecha: tarjeta de fondo blanco con un logo circular rojo/bordo arriba a la izquierda con el texto 'HSF', "
+              "junto al nombre 'Historias Sin Filtro' con un check de verificacion azul, "
+              "y debajo, en letras negras grandes en mayuscula, centrado, el texto exacto: "
+              "\"¿HICE MAL EN DEFENDER A MI HERMANA?\" "
+              "Borde rojo grueso alrededor de toda la imagen y una linea roja vertical separando ambas mitades. "
+              "Resolucion 1280x720, estilo miniatura de YouTube clickbait pero de buen gusto."
+          )
+
+          resp = requests.post(
+              "https://gen.pollinations.ai/v1/images/generations",
+              headers={
+                  "Authorization": f"Bearer {os.environ['POLLINATIONS_API_KEY']}",
+                  "Content-Type": "application/json",
+              },
+              json={"model": "nanobanana-pro", "prompt": prompt, "size": "1280x720"},
+              timeout=120,
+          )
+          print("Status:", resp.status_code)
+          data = resp.json()
+
+          b64 = data["data"][0]["b64_json"]
+          with open("miniatura_prueba.png", "wb") as f:
+              f.write(base64.b64decode(b64))
+          print("Guardada miniatura_prueba.png")
+          PYEOF
+
+      - name: Subir miniatura como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniatura-prueba
+          path: miniatura_prueba.png
