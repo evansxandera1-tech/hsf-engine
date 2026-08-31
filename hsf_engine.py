@@ -36,7 +36,6 @@ CARPETA_MUSICA = os.path.join(CARPETA_BASE, "musica_hsf")
 CARPETA_FUENTES = os.path.join(CARPETA_BASE, "fuentes_hsf")
 CARPETA_LOGS = os.path.join(CARPETA_BASE, "logs_hsf")
 CARPETA_PREVIEWS_VOZ = os.path.join(CARPETA_BASE, "previews_voz_hsf")
-CARPETA_PRUEBAS_AUDIO_REDDIT = os.path.join(CARPETA_BASE, "pruebas_audio_reddit")
 
 # ---- Fuentes reales de contenido (v5.4): texto ya parafraseado (repo
 # "traduce") y gameplay propio (gameplay_slither), ambos sincronizados
@@ -1267,10 +1266,6 @@ import itertools
 # rompe el resto del programa) hasta que lo descargues y lo coloques ahí.
 RUTA_DATASET_AITA = os.path.join(CARPETA_BASE, "dataset_aita.csv")
 
-SUBREDDITS_RELATOS = [
-    "AITAH", "relationship_advice", "confessions", "TrueOffMyChest",
-    "maliciouscompliance",
-]
 
 # Filtros de selección: se descartan historias fuera de este rango de
 # palabras, con pocos upvotes, o marcadas como NSFW/borradas.
@@ -1299,160 +1294,19 @@ UPVOTES_MINIMOS_HISTORIA = 0
 # corto o largo, ajustar estos dos números.
 PALABRAS_OBJETIVO_MIN, PALABRAS_OBJETIVO_MAX = 4400, 5400
 
-RUTA_HISTORIAS_USADAS = os.path.join(CARPETA_BASE, "reddit_historias_usadas.json")
 
 
 
-def _cargar_ids_usados():
-    if not os.path.exists(RUTA_HISTORIAS_USADAS):
-        return set()
-    try:
-        with open(RUTA_HISTORIAS_USADAS, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    except Exception:
-        return set()
 
 
-def _guardar_id_usado(id_post):
-    usados = _cargar_ids_usados()
-    usados.add(id_post)
-    try:
-        with open(RUTA_HISTORIAS_USADAS, "w", encoding="utf-8") as f:
-            json.dump(sorted(usados), f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
 
 
-def _normalizar_y_filtrar(id_post, subreddit, titulo, cuerpo, upvotes, over_18, url, ids_usados):
-    """Aplica los filtros de selección a los datos ya extraídos de un post,
-    vengan del JSON o del RSS. Punto único de filtrado para los dos métodos."""
-    if not id_post or id_post in ids_usados:
-        return None
-    if over_18:
-        return None
-    titulo = (titulo or "").strip()
-    cuerpo = (cuerpo or "").strip()
-    if not cuerpo or cuerpo in ("[removed]", "[deleted]"):
-        return None
-    n_palabras = len(cuerpo.split())
-    if n_palabras < PALABRAS_MIN_HISTORIA or n_palabras > PALABRAS_MAX_HISTORIA:
-        return None
-    if upvotes < UPVOTES_MINIMOS_HISTORIA:
-        return None
-    return {
-        "id": id_post,
-        "subreddit": subreddit,
-        "titulo": titulo,
-        "cuerpo": cuerpo,
-        "upvotes": upvotes,
-        "url": url,
-    }
 
 
-def _candidatos_por_dataset(sub, ids_usados, logger=None):
-    """Vía de respaldo (v2.5): dataset local descargado de antemano, solo
-    para r/AITAH por ahora. No depende de la red ni de que Reddit esté
-    bloqueando o no: si el archivo RUTA_DATASET_AITA existe, siempre puede
-    aportar candidatos. Acepta encabezados típicos de los datasets públicos
-    de AITA (id/title/text o body/selftext, score u ups opcional)."""
-    candidatos = []
-    if sub.lower() != "aitah" or not os.path.exists(RUTA_DATASET_AITA):
-        return candidatos
-    try:
-        with open(RUTA_DATASET_AITA, "r", encoding="utf-8", newline="") as f:
-            lector = csv.DictReader(f)
-            for fila in lector:
-                id_post = fila.get("id") or fila.get("post_id") or ""
-                titulo = fila.get("title") or fila.get("titulo") or ""
-                cuerpo = fila.get("text") or fila.get("body") or fila.get("selftext") or ""
-                try:
-                    upvotes = int(float(fila.get("score") or fila.get("ups") or 0))
-                except (TypeError, ValueError):
-                    upvotes = 0
-                candidato = _normalizar_y_filtrar(
-                    id_post, "AITAH", titulo, cuerpo, upvotes, False,
-                    f"https://reddit.com/r/AITAH/comments/{id_post}", ids_usados,
-                )
-                if candidato:
-                    candidatos.append(candidato)
-    except Exception as e:
-        if logger:
-            logger.warning(f"No se pudo leer el dataset local de AITA: {e}")
-    return candidatos
 
 
-def _agrupar_para_objetivo(candidatos):
-    """A partir de todos los candidatos disponibles (ya filtrados y sin
-    usar), arma el grupo de historias para un solo video, apuntando a
-    PALABRAS_OBJETIVO_MIN/MAX en total:
-
-    1. Si hay alguna historia individual que ya cae en ese rango sola, se
-       usa esa (la de más upvotes entre las que cumplen).
-    2. Si no, se prueban combinaciones de 2 y de 3 historias entre las 15
-       más votadas, buscando alguna cuya suma de palabras entre en rango;
-       se prefiere la de más upvotes sumados y, a igualdad, la que use
-       menos historias.
-    3. Si ninguna combinación entra en rango, se devuelve igual la historia
-       individual más votada (el video sale más corto que el objetivo,
-       pero no se queda sin nada).
-
-    Devuelve una lista de 1 a 3 diccionarios de historia."""
-    if not candidatos:
-        return []
-
-    en_rango = [c for c in candidatos if PALABRAS_OBJETIVO_MIN <= len(c["cuerpo"].split()) <= PALABRAS_OBJETIVO_MAX]
-    if en_rango:
-        en_rango.sort(key=lambda c: c["upvotes"], reverse=True)
-        return [en_rango[0]]
-
-    top_candidatos = sorted(candidatos, key=lambda c: c["upvotes"], reverse=True)[:15]
-    mejor_clave, mejor_combo = None, None
-    for tam in (2, 3):
-        for combo in itertools.combinations(top_candidatos, tam):
-            total_palabras = sum(len(c["cuerpo"].split()) for c in combo)
-            if PALABRAS_OBJETIVO_MIN <= total_palabras <= PALABRAS_OBJETIVO_MAX:
-                total_upvotes = sum(c["upvotes"] for c in combo)
-                clave = (-total_upvotes, tam)
-                if mejor_clave is None or clave < mejor_clave:
-                    mejor_clave, mejor_combo = clave, combo
-    if mejor_combo:
-        return list(mejor_combo)
-
-    candidatos_ordenados = sorted(candidatos, key=lambda c: c["upvotes"], reverse=True)
-    return [candidatos_ordenados[0]]
 
 
-def obtener_historia_reddit(subreddits=None, logger=None):
-    """Trae candidatos del dataset local de AITA (RUTA_DATASET_AITA) y arma
-    el grupo de 1 a 3 historias para un solo video, apuntando a 28-30
-    minutos de narración (ver _agrupar_para_objetivo).
-
-    v5.3: se sacó el scraping en vivo de Reddit (login/JSON/RSS) y de
-    Mumsnet — Reddit bloqueaba el tráfico anónimo y Mumsnet dejó de traer
-    historias. La única fuente que queda es el dataset local; si
-    RUTA_DATASET_AITA no existe o está vacío, esta función no tiene de
-    dónde traer nada y devuelve None (revisar que dataset_aita.csv esté
-    subido al dataset de Hugging Face que descarga el workflow).
-
-    Devuelve una LISTA de 1 a 3 diccionarios con
-    id/subreddit/titulo/cuerpo/upvotes/url, o None si no se encontró
-    ningún candidato."""
-    subreddits = subreddits or SUBREDDITS_RELATOS
-    ids_usados = _cargar_ids_usados()
-    candidatos = []
-
-    for sub in subreddits:
-        candidatos.extend(_candidatos_por_dataset(sub, ids_usados, logger=logger))
-
-    if not candidatos:
-        if logger:
-            logger.warning(
-                "Sin candidatos: el dataset local de AITA no existe o está vacío "
-                f"({RUTA_DATASET_AITA}). Es la única fuente de historias disponible."
-            )
-        return None
-
-    return _agrupar_para_objetivo(candidatos)
 
 
 # ===================== Guion con Gemini (traducción + transformación) =====================
@@ -1463,238 +1317,19 @@ GEMINI_MODELO = "gemini-3.5-flash-lite"
 
 # Tono/personalidad del narrador. Placeholder por ahora: ajustar cuando se
 # defina el tono final (serio, canchero, sarcástico, neutro-cercano...).
-TONO_NARRADOR_REDDIT = "cercano y natural, como si le contara la historia a un amigo"
 
-PROMPT_GUION_REDDIT = """Traducí y adaptá al español la siguiente historia (puede venir de Reddit o de un foro británico como Mumsnet/AIBU; no la traduzcas palabra por palabra: adaptá modismos y tono para que suene natural, como si un narrador la contara en voz alta).
 
-Reglas de términos y jerga del foro de origen (aplicá solo las que correspondan según lo que aparezca en el texto):
-- Veredicto: "AITA"/"AIBU" → convertilo en la pregunta narrativa "¿Estoy siendo injusta/o?". "YTA"/"YABU" → "sí, estás siendo injusta/o". "NTA"/"YANBU" → "no estás siendo injusta/o". Nunca los traduzcas palabra por palabra ni los dejes en inglés.
-- Otra jerga de veredicto/foro si aparece: WWYD → "¿qué harían ustedes?"; LTB → "déjalo"/"termina la relación"; STBXH/STBXW → "mi futuro exesposo/a"; IMHO → "en mi humilde opinión" (o se omite si suena forzado); HTH, RTFT y jerga interna similar → se omiten, no aportan a la narración.
-- Acrónimos de parentesco: expandilos siempre (DH → mi esposo, DD → mi hija, DS → mi hijo, DP → mi pareja, DC → mi hijo/a, PIL → mis suegros, MIL → mi suegra, FIL → mi suegro).
-- Nombres de usuario del foro (si aparecen citados, ej. "Fulanito dice..."): no los traduzcas ni los leas literal si suenan raros en voz alta; reemplazalos por una referencia neutra ("otra persona respondió...", "alguien más comentó...").
-- Referencias culturales locales (NHS, marcas, lugares, programas de TV): mantenelas tal cual y agregá una aclaración breve entre paréntesis SOLO si el sentido no es obvio sin ella.
-- Conservá el sarcasmo, la ironía o el tono pasivo-agresivo del original si lo tiene; no lo suavices. Si hay humor seco (típico de foros británicos), buscale un equivalente natural en español, no traducción literal que pierda la gracia.
-
-Después:
-1. Mantené prácticamente todo el relato: no la resumas de más, achicá solo partes claramente repetitivas si las hay. El largo de esta historia ya se eligió a propósito para la duración del video, así que un guion mucho más corto que el original es un problema.
-2. Agregá 2 o 3 comentarios o reacciones breves del narrador insertados durante el relato (por ejemplo "acá se puso interesante", "yo no hubiera aguantado eso").
-3. Empezá con un gancho corto de 1-2 frases explicando por qué se eligió esta historia.
-4. Cerrá con una reflexión o pregunta corta para el espectador.
-5. Puntuá y acentuá el texto con cuidado (comas, puntos, puntos suspensivos, signos de exclamación e interrogación, tildes). La voz sintética que va a leer esto en voz alta solo usa la puntuación para decidir pausas y entonación: si el texto queda sin acentos o con puntuación pobre, se lee plano y sin emoción. Usá los signos donde correspondan para marcar sorpresa, tensión, humor o alivio según el momento del relato.
-
-Tono del narrador: {tono}
-
-Historia original (título: "{titulo}"):
-{cuerpo}
-
-Devolvé SOLO el texto final del guion, sin explicaciones ni comillas alrededor. No uses asteriscos, markdown ni emojis."""
-
-PROMPT_GUION_REDDIT_MULTIPLE = """Vas a armar un guion narrado en español para un video que junta varias historias reales (de Reddit y/o de un foro británico como Mumsnet/AIBU), una atrás de la otra, para llegar a unos 28-30 minutos de narración en total.
-
-Reglas de términos y jerga del foro de origen (aplicá solo las que correspondan según lo que aparezca en cada historia):
-- Veredicto: "AITA"/"AIBU" → convertilo en la pregunta narrativa "¿Estoy siendo injusta/o?". "YTA"/"YABU" → "sí, estás siendo injusta/o". "NTA"/"YANBU" → "no estás siendo injusta/o". Nunca los traduzcas palabra por palabra ni los dejes en inglés.
-- Otra jerga de veredicto/foro si aparece: WWYD → "¿qué harían ustedes?"; LTB → "déjalo"/"termina la relación"; STBXH/STBXW → "mi futuro exesposo/a"; IMHO → "en mi humilde opinión" (o se omite si suena forzado); HTH, RTFT y jerga interna similar → se omiten, no aportan a la narración.
-- Acrónimos de parentesco: expandilos siempre (DH → mi esposo, DD → mi hija, DS → mi hijo, DP → mi pareja, DC → mi hijo/a, PIL → mis suegros, MIL → mi suegra, FIL → mi suegro).
-- Nombres de usuario del foro (si aparecen citados): no los traduzcas ni los leas literal si suenan raros en voz alta; reemplazalos por una referencia neutra ("otra persona respondió...", "alguien más comentó...").
-- Referencias culturales locales (NHS, marcas, lugares, programas de TV): mantenelas tal cual y agregá una aclaración breve entre paréntesis SOLO si el sentido no es obvio sin ella.
-- Conservá el sarcasmo, la ironía o el tono pasivo-agresivo del original si lo tiene; no lo suavices. Si hay humor seco (típico de foros británicos), buscale un equivalente natural en español, no traducción literal que pierda la gracia.
-
-Para cada una de las historias numeradas abajo:
-1. Traducila y adaptala al español (no palabra por palabra: adaptá modismos y tono para que suene natural).
-2. Mantené prácticamente todo el relato: no la resumas de más, achicá solo partes claramente repetitivas si las hay. El largo de cada historia ya se eligió a propósito para llegar a los 28-30 minutos entre todas, así que un guion mucho más corto que el conjunto original es un problema.
-3. Agregá 2 o 3 comentarios o reacciones breves del narrador insertados durante el relato.
-
-Reglas para el guion completo:
-- Empezá con un gancho corto (2-3 frases) que presente que hoy van varias historias, sin arruinar los finales.
-- Entre historia e historia, agregá una transición corta y natural del narrador (por ejemplo "bueno, pasemos a la siguiente..."), variando la frase cada vez para que no se repita.
-- Cerrá todo el guion con una sola reflexión o pregunta corta para el espectador, que abarque el conjunto.
-- Puntuá y acentuá con mucho cuidado (comas, puntos, puntos suspensivos, exclamaciones, interrogaciones, tildes): la voz sintética que lee esto en voz alta solo usa la puntuación para decidir pausas y entonación.
-
-Tono del narrador: {tono}
-
-Historias:
-{historias}
-
-Devolvé SOLO el texto final del guion completo y unificado, sin explicaciones, sin numerar ni titular cada historia, sin comillas alrededor. No uses asteriscos, markdown ni emojis."""
 
 # ----- Guion en inglés adaptado (v3.4) -----
 # No traduce (el original ya está en inglés): adapta y transforma para que
 # cuente como contenido editado/comentado y no una simple lectura del post
 # original, con el mismo criterio de monetización que ya se aplicaba al
 # guion en español.
-PROMPT_GUION_INGLES = """Adapt the following real story (from Reddit or a British forum like Mumsnet/AIBU) into a narrated script. Do NOT just copy the original text: rework the phrasing, add narrator commentary, and restructure it into a proper spoken narration — this needs to read as transformed, commented content, not a verbatim reading of the original post (important for monetisation).
-
-Rules for forum jargon (apply only what's relevant):
-- Keep verdict jargon (AITA/AIBU, YTA/YABU, NTA/YANBU) but phrase it naturally as part of the narration, not as raw acronyms.
-- Expand kinship acronyms (DH -> my husband, DD -> my daughter, DS -> my son, DP -> my partner, DC -> my child, PIL -> my in-laws, MIL -> my mother-in-law, FIL -> my father-in-law).
-- If forum usernames are quoted, don't read them literally if they sound odd out loud; replace with a neutral reference ("someone else replied...", "another commenter said...").
-
-Then:
-1. Keep almost all of the story: don't over-summarise, only trim clearly repetitive parts. The length was chosen on purpose for the video's target duration.
-2. Add 2-3 brief narrator reactions/comments woven into the story (e.g. "now that's when it got interesting", "I wouldn't have put up with that").
-3. Start with a short 1-2 sentence hook explaining why this story was picked.
-4. Close with a short reflection or question for the viewer.
-5. Punctuate carefully (commas, full stops, ellipses, exclamation and question marks) since the synthetic voice reading this only uses punctuation to decide pauses and tone.
-
-Narrator tone: {tono}
-
-Original story (title: "{titulo}"):
-{cuerpo}
-
-Return ONLY the final script text, no explanations or quotes around it. No asterisks, markdown or emojis."""
-
-PROMPT_GUION_INGLES_MULTIPLE = """You're building one narrated script in English that joins several real stories (from Reddit and/or a British forum like Mumsnet/AIBU) back to back, aiming for about 28-30 minutes of narration total. Do NOT just copy the original texts: rework the phrasing, add narrator commentary, and restructure — this needs to read as transformed, commented content, not a verbatim reading (important for monetisation).
-
-Rules for forum jargon (apply only what's relevant per story):
-- Keep verdict jargon (AITA/AIBU, YTA/YABU, NTA/YANBU) but phrase it naturally as part of the narration.
-- Expand kinship acronyms (DH -> my husband, DD -> my daughter, DS -> my son, DP -> my partner, DC -> my child, PIL -> my in-laws, MIL -> my mother-in-law, FIL -> my father-in-law).
-- If forum usernames are quoted, replace with a neutral reference instead of reading them literally.
-
-For each numbered story below:
-1. Rework it into narration (don't just copy the original wording).
-2. Keep almost all of the story: don't over-summarise, only trim clearly repetitive parts.
-3. Add 2-3 brief narrator reactions/comments woven into the story.
-
-Rules for the whole script:
-- Start with a short hook (2-3 sentences) letting viewers know several stories are coming, without spoiling the endings.
-- Between stories, add a short natural narrator transition (e.g. "alright, moving on to the next one..."), varying the phrase each time.
-- Close the whole script with a single reflection or question for the viewer covering all the stories.
-- Punctuate carefully: the synthetic voice reading this only uses punctuation to decide pauses and tone.
-
-Narrator tone: {tono}
-
-Stories:
-{historias}
-
-Return ONLY the final unified script text, no explanations, no numbering or titling each story, no quotes around it. No asterisks, markdown or emojis."""
 
 
-def generar_guion_ingles(grupo, tono=TONO_NARRADOR_REDDIT, logger=None):
-    """Igual que generar_guion_reddit pero en inglés y SIN traducir (el
-    original ya está en inglés): adapta/transforma el texto para que
-    cuente como contenido editado y no una copia del post original."""
-    if not GEMINI_API_KEY:
-        if logger:
-            logger.warning("GEMINI_API_KEY vacía: se usa la historia en inglés sin adaptar.")
-        return "\n\n".join(h["cuerpo"] for h in grupo)
-
-    if len(grupo) == 1:
-        prompt = PROMPT_GUION_INGLES.format(tono=tono, titulo=grupo[0]["titulo"], cuerpo=grupo[0]["cuerpo"])
-    else:
-        bloques_historias = "\n\n".join(
-            f'Story {i + 1} (title: "{h["titulo"]}"):\n{h["cuerpo"]}' for i, h in enumerate(grupo)
-        )
-        prompt = PROMPT_GUION_INGLES_MULTIPLE.format(tono=tono, historias=bloques_historias)
-
-    intentos_maximos = 4
-    espera = 5
-    for intento in range(1, intentos_maximos + 1):
-        try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-                params={"key": GEMINI_API_KEY},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=90,
-            )
-            if resp.status_code == 429:
-                espera_real = espera
-                try:
-                    espera_real = max(espera, int(float(resp.headers.get("Retry-After", espera))))
-                except (TypeError, ValueError):
-                    pass
-                if logger:
-                    logger.warning(
-                        f"Gemini devolvió 429 (guion inglés). Intento {intento}/{intentos_maximos}, "
-                        f"reintentando en {espera_real}s..."
-                    )
-                if intento < intentos_maximos:
-                    time.sleep(espera_real)
-                    espera *= 2
-                    continue
-                resp.raise_for_status()
-            resp.raise_for_status()
-            datos = resp.json()
-            return datos["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except Exception as e:
-            if intento >= intentos_maximos:
-                if logger:
-                    logger.warning(f"Fallo la generación del guion en inglés tras {intentos_maximos} intentos, se usa el texto original: {e}")
-                return "\n\n".join(h["cuerpo"] for h in grupo)
-            if logger:
-                logger.warning(f"Fallo al llamar a Gemini para guion inglés (intento {intento}/{intentos_maximos}): {e}")
-            time.sleep(espera)
-            espera *= 2
-    return "\n\n".join(h["cuerpo"] for h in grupo)
 
 
-def generar_guion_reddit(grupo, tono=TONO_NARRADOR_REDDIT, logger=None):
-    """Arma el guion final (traducido + adaptado + con comentarios del
-    narrador) a partir de un grupo de 1 a 3 historias crudas de Reddit
-    (ver obtener_historia_reddit), usando una sola llamada a la API de
-    Gemini. Si son varias historias, las une en un solo guion con
-    transiciones entre ellas. Si falla o no hay API key configurada,
-    devuelve el texto original sin transformar (con aviso en el log) para
-    que el resto del pipeline no se caiga."""
-    if not GEMINI_API_KEY:
-        if logger:
-            logger.warning("GEMINI_API_KEY vacía: se usa la historia sin traducir/transformar.")
-        return "\n\n".join(h["cuerpo"] for h in grupo)
 
-    if len(grupo) == 1:
-        prompt = PROMPT_GUION_REDDIT.format(tono=tono, titulo=grupo[0]["titulo"], cuerpo=grupo[0]["cuerpo"])
-    else:
-        bloques_historias = "\n\n".join(
-            f'Historia {i + 1} (título: "{h["titulo"]}"):\n{h["cuerpo"]}' for i, h in enumerate(grupo)
-        )
-        prompt = PROMPT_GUION_REDDIT_MULTIPLE.format(tono=tono, historias=bloques_historias)
-
-    # Gemini free tier devuelve 429 (Too Many Requests) cuando se supera el
-    # límite de pedidos por minuto — algo fácil de pisar en pruebas
-    # seguidas como las que se venían haciendo. Antes, un solo 429 hacía
-    # caer directo al texto sin traducir. Ahora se reintenta unas pocas
-    # veces con espera creciente (y respetando el header Retry-After si
-    # Gemini lo manda) antes de rendirse.
-    intentos_maximos = 4
-    espera = 5
-    for intento in range(1, intentos_maximos + 1):
-        try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-                params={"key": GEMINI_API_KEY},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=90,
-            )
-            if resp.status_code == 429:
-                espera_real = espera
-                try:
-                    espera_real = max(espera, int(float(resp.headers.get("Retry-After", espera))))
-                except (TypeError, ValueError):
-                    pass
-                if logger:
-                    logger.warning(
-                        f"Gemini devolvió 429 (límite de pedidos). Intento {intento}/{intentos_maximos}, "
-                        f"reintentando en {espera_real}s..."
-                    )
-                if intento < intentos_maximos:
-                    time.sleep(espera_real)
-                    espera *= 2
-                    continue
-                resp.raise_for_status()
-            resp.raise_for_status()
-            datos = resp.json()
-            return datos["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except Exception as e:
-            if intento >= intentos_maximos:
-                if logger:
-                    logger.warning(f"Fallo la generación del guion con Gemini tras {intentos_maximos} intentos, se usa el texto original: {e}")
-                return "\n\n".join(h["cuerpo"] for h in grupo)
-            # Fallo que no sea 429 (ej. de red): igual se reintenta, con la
-            # misma espera creciente, por si fue algo pasajero.
-            if logger:
-                logger.warning(f"Fallo al llamar a Gemini (intento {intento}/{intentos_maximos}): {e}")
-            time.sleep(espera)
-            espera *= 2
-    return "\n\n".join(h["cuerpo"] for h in grupo)
 
 # ============================================================
 # ---- módulo original: subtitulos.py ----
