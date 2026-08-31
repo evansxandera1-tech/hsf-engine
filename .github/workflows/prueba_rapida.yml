@@ -14,9 +14,4 @@ jobs:
       - name: Test Gemini API
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          python3 -c "
-import os
-key = os.environ.get('GEMINI_API_KEY', '')
-print('Key presente:', bool(key), '- largo:', len(key))
-"
+        run: python3 -c "import os; key=os.environ.get('GEMINI_API_KEY',''); print('Key presente:', bool(key), '- largo:', len(key))"
