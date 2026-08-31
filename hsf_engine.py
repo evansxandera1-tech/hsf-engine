@@ -3179,11 +3179,16 @@ def _subir_ultimo_resultado_a_youtube(logger):
         # Si hay una plantilla fija en Drive (gdrive:miniatura/miniatura_
         # plantilla.png), se usa esa en vez de sacar un frame del video:
         # mismo diseño siempre, solo cambia el título.
-        ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
-        ok_miniatura = generar_miniatura_nueva(
+        ok_miniatura = generar_miniatura_nanobanana_pro(
             titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
-            ruta_video_fondo=resultado["ruta_video"],
+            historia_completa=resultado.get("guion"),
         )
+        ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
+        if not ok_miniatura:
+            ok_miniatura = generar_miniatura_nueva(
+                titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
+                ruta_video_fondo=resultado["ruta_video"],
+            )
         if not ok_miniatura:
             ok_miniatura = generar_miniatura_clickbait(
                 titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
@@ -3352,6 +3357,92 @@ def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, im
             if intento >= intentos_maximos:
                 if logger:
                     logger.warning(f"Fallo generar_ilustracion_pollinations tras {intentos_maximos} intentos: {e}")
+                return None
+            time.sleep(espera); espera *= 2
+    return None
+
+
+def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salida, logger=None, historia_completa=None):
+    """Genera la miniatura COMPLETA (foto + titulo + franja + logo, todo
+    'quemado' directamente por el modelo de IA en una sola imagen) usando
+    nanobanana-pro via Pollinations. El propio modelo decide si mostrar 1,
+    2 o 3 personas segun el conflicto del titulo/franja, manteniendo
+    identidad visual fija (logo, tipografia, colores) entre miniaturas.
+    Si falla o no hay API key, devuelve None y la cadena de miniaturas cae
+    al siguiente metodo (generar_miniatura_nueva)."""
+    if not POLLINATIONS_API_KEY:
+        if logger:
+            logger.warning("POLLINATIONS_API_KEY vacia: no se genera miniatura nanobanana-pro.")
+        return None
+
+    titular = titulo_miniatura.strip().upper()
+    if len(titular) > 70:
+        titular = titular[:69].rstrip() + "…"
+
+    franja = _generar_pregunta_miniatura(historia_completa or resumen_texto, logger=logger)
+
+    prompt = (
+        "Miniatura de YouTube fotorrealista, una sola imagen a pantalla completa "
+        "(sin paneles ni tarjetas separadas). Analiza el titular y la frase de la "
+        "franja roja que se muestran abajo, interpreta de que trata el conflicto, "
+        "y genera una escena fotorrealista que represente ese conflicto de forma "
+        "dramatica: si el texto sugiere una confrontacion directa entre dos "
+        "personas (traicion, pelea, acusacion), muestra 2 personas cara a cara; "
+        "si el texto sugiere un conflicto con un tercero involucrado, muestra 3 "
+        "personas con roles claros; si el texto sugiere un descubrimiento o "
+        "momento intimo y solitario, muestra 1 sola persona en primer plano. "
+        "La escena debe ser SIEMPRE en primer plano o medio plano, con el/los "
+        "rostro(s) ocupando gran parte del frame (nunca personas chicas o "
+        "lejanas). Debe ocurrir dentro de una casa, con iluminacion dramatica de "
+        "cine tipo thriller usando siempre luz lateral proveniente de una "
+        "ventana, sombras marcadas, y SIEMPRE el mismo tono de color "
+        "frio/desaturado con tinte azulado en las sombras, para mantener "
+        "identidad visual consistente entre miniaturas. Expresiones faciales de "
+        "dolor, ira contenida o shock genuino (no actuadas). Con un degradado "
+        "oscuro semitransparente que cubre la parte superior e inferior de la "
+        "imagen para que el texto se lea bien encima de la foto. "
+        "Arriba a la izquierda, chico: un logo circular rojo/bordo con las letras "
+        "'HSF' y al lado el texto blanco 'Historia Sin Filtro', SIEMPRE del mismo "
+        "tamano y posicion exacta. "
+        "Debajo de eso, ocupando la parte superior, un titular en mayuscula, "
+        "fuente gruesa tipo impact, SIEMPRE color blanco con la ultima palabra "
+        f"clave en amarillo, texto exacto: '{titular}'. "
+        "Abajo del todo, SIEMPRE una franja roja solida (mismo tono de rojo) de "
+        f"ancho completo con texto blanco en mayuscula: '{franja}'. "
+        "Estilo miniatura de YouTube clickbait de historias reales tipo true "
+        "crime/drama familiar, sin marco ni borde de color, sin panel blanco, "
+        "todo el texto quemado directamente sobre la foto, letras grandes con "
+        "buen espacio entre lineas para que no se pisen entre si. Resolucion "
+        "1280x720."
+    )
+
+    cuerpo = {
+        "prompt": prompt, "model": "nanobanana-pro",
+        "size": "1280x720", "response_format": "b64_json",
+    }
+    intentos_maximos, espera = 3, 5
+    for intento in range(1, intentos_maximos + 1):
+        try:
+            resp = requests.post(
+                "https://gen.pollinations.ai/v1/images/generations",
+                headers={"Authorization": f"Bearer {POLLINATIONS_API_KEY}"},
+                json=cuerpo, timeout=120,
+            )
+            if resp.status_code in (429, 503) and intento < intentos_maximos:
+                if logger:
+                    logger.warning(f"Pollinations {resp.status_code} (nanobanana-pro), reintentando en {espera}s...")
+                time.sleep(espera); espera *= 2; continue
+            resp.raise_for_status()
+            datos_b64 = resp.json()["data"][0]["b64_json"]
+            with open(ruta_salida, "wb") as f:
+                f.write(base64.b64decode(datos_b64))
+            if logger:
+                logger.info(f"Miniatura nanobanana-pro generada: {ruta_salida}")
+            return ruta_salida
+        except Exception as e:
+            if intento >= intentos_maximos:
+                if logger:
+                    logger.warning(f"Fallo generar_miniatura_nanobanana_pro tras {intentos_maximos} intentos: {e}")
                 return None
             time.sleep(espera); espera *= 2
     return None
