@@ -2427,7 +2427,7 @@ def _generar_pregunta_miniatura(resumen_texto, logger=None):
         prompt = PROMPT_PREGUNTA_MINIATURA.format(resumen=resumen_texto[:600])
         resp = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            params={"key": GEMINI_API_KEY},
+            headers={"x-goog-api-key": GEMINI_API_KEY},
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30,
         )
@@ -2465,7 +2465,7 @@ def _armar_titulo_youtube(titulo_resumen, subreddits, logger=None):
         prompt = PROMPT_TITULO_YOUTUBE.format(titulo=titulo_original)
         resp = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            params={"key": GEMINI_API_KEY},
+            headers={"x-goog-api-key": GEMINI_API_KEY},
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30,
         )
@@ -2622,7 +2622,7 @@ def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
         )
         resp = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            params={"key": GEMINI_API_KEY},
+            headers={"x-goog-api-key": GEMINI_API_KEY},
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30,
         )
@@ -2798,7 +2798,7 @@ def _generar_ilustracion_fondo_gemini(resumen_texto, ruta_salida, logger=None):
         try:
             resp = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO_IMAGEN}:generateContent",
-                params={"key": GEMINI_API_KEY},
+                headers={"x-goog-api-key": GEMINI_API_KEY},
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=90,
             )
