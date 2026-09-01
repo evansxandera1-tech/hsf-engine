@@ -2394,8 +2394,9 @@ def _obtener_plantilla_intro_desde_drive(logger=None):
     o None si no se pudo conseguir."""
     os.makedirs(CARPETA_INTRO_LOCAL, exist_ok=True)
     ruta_local = os.path.join(CARPETA_INTRO_LOCAL, "intro_plantilla.png")
-    if os.path.exists(ruta_local):
-        return ruta_local
+    # Siempre se vuelve a bajar de Drive (no se cachea la primera descarga
+    # para siempre): asi si se actualiza la plantilla en Drive, el pipeline
+    # usa la version nueva automaticamente en la proxima corrida.
     try:
         resultado = subprocess.run(
             ["rclone", "copyto", f"{RCLONE_REMOTE_INTRO}/intro_plantilla.png", ruta_local],
