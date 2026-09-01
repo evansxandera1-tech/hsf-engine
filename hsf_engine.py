@@ -3015,11 +3015,12 @@ def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida
             lineas_.append(" ".join(actual))
         return lineas_
 
-    candidatos = [(56, 64), (50, 58), (44, 51), (38, 44), (32, 37), (27, 31), (22, 26)]
+    candidatos = [(56, 68), (50, 61), (44, 54), (38, 47), (32, 40), (27, 34), (22, 29), (18, 24)]
     lineas, tamano_texto, alto_linea = None, None, None
+    margen_seguridad = 20  # aire extra para que la ultima linea no toque el borde
     for tamano, alto in candidatos:
         prueba = _envolver_real(texto, tamano, ancho_texto_disponible)
-        if len(prueba) <= 6 and len(prueba) * alto <= alto_texto_disponible:
+        if len(prueba) <= 6 and len(prueba) * alto <= (alto_texto_disponible - margen_seguridad):
             lineas, tamano_texto, alto_linea = prueba, tamano, alto
             break
     if lineas is None:
