@@ -2060,7 +2060,7 @@ def procesar_todo(texto_bruto, frases_por_bloque, posicion, color_sub, tamano_su
         # superpuesta sobre los primeros segundos del video (si hay
         # plantilla disponible en Drive). Si falla, no corta el video:
         # simplemente queda sin esa intro.
-        ruta_plantilla_intro = _obtener_plantilla_miniatura_desde_drive(logger=logger)
+        ruta_plantilla_intro = _obtener_plantilla_intro_desde_drive(logger=logger)
         if ruta_plantilla_intro:
             resumen_intro = " ".join(texto_bruto.split())[:100]
             if " " in resumen_intro:
