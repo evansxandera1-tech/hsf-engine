@@ -40,7 +40,7 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
-          HSF_PRIVACIDAD_YOUTUBE: "unlisted"
+          HSF_PRIVACIDAD_YOUTUBE: "public"
         run: |
           python3 << 'PYEOF'
           import logging
