@@ -2967,26 +2967,28 @@ def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida
     palabras_texto = texto_limpio.split()
     duracion_real = max(duracion_intro, len(palabras_texto) * 0.35)
 
+    # No se trunca a un numero fijo de caracteres a ciegas: se envuelve el
+    # texto completo mas abajo, y solo si de verdad no entra en 6 lineas se
+    # corta la ULTIMA linea visible con "..." (nunca se descartan lineas
+    # completas en silencio).
     texto = texto_limpio.upper()
-    if len(texto) > 220:
-        texto = texto[:220].rstrip()
-        if " " in texto:
-            texto = texto.rsplit(" ", 1)[0]
-        texto += "…"
 
     ruta_fuente = _mf_buscar_fuente_condensada()
     fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
 
-    # Zona de texto dentro del rectangulo blanco de la plantilla (calculada
-    # sobre la plantilla real escalada a RESOLUCION_ANCHOxRESOLUCION_ALTO):
-    # el blanco va de x 237-1139 / y 76-692 sobre una plantilla de 1376x768,
-    # y el header (logo + nombre) termina en y=268 de esa misma plantilla.
+    # Zona de texto dentro del rectangulo blanco de la plantilla (medida
+    # directamente sobre la plantilla real de 1376x768, y escalada a
+    # RESOLUCION_ANCHOxRESOLUCION_ALTO=1920x1080): el blanco va de
+    # x 237-1139 / y 76-692 en la plantilla original, y el header (logo +
+    # nombre) termina en y=286 de esa misma plantilla. Escalado:
+    # x: 237*1.395349=330.7 / 1139*1.395349=1589.4
+    # y: header 286*1.40625=402.2 / blanco-abajo 692*1.40625=973.3
     from PIL import ImageFont
 
     x_izq_texto = 330
     x_der_texto = 1590
-    y_arriba_texto = 390
-    y_abajo_texto = 950
+    y_arriba_texto = 415  # un poco debajo del header (~402) para no pisarlo
+    y_abajo_texto = 930   # un poco arriba del borde blanco (~973) de margen
     ancho_texto_disponible = x_der_texto - x_izq_texto - 160
     alto_texto_disponible = y_abajo_texto - y_arriba_texto
 
@@ -3017,11 +3019,22 @@ def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida
     for tamano, alto in candidatos:
         prueba = _envolver_real(texto, tamano, ancho_texto_disponible)
         if len(prueba) <= 6 and len(prueba) * alto <= alto_texto_disponible:
-            lineas, tamano_texto, alto_linea = prueba[:6], tamano, alto
+            lineas, tamano_texto, alto_linea = prueba, tamano, alto
             break
     if lineas is None:
+        # Ni al tamano mas chico entra completo: se usa el tamano mas chico
+        # igual, pero el corte a 6 lineas queda marcado con "..." en la
+        # ultima linea visible, en vez de desaparecer palabras en silencio.
         tamano_texto, alto_linea = candidatos[-1]
-        lineas = _envolver_real(texto, tamano_texto, ancho_texto_disponible)[:6]
+        lineas_completas = _envolver_real(texto, tamano_texto, ancho_texto_disponible)
+        if len(lineas_completas) > 6:
+            lineas = lineas_completas[:6]
+            ultima = lineas[-1].rstrip()
+            if ultima.endswith((".", "!", "?", "…")):
+                ultima = ultima[:-1]
+            lineas[-1] = ultima.rstrip() + "…"
+        else:
+            lineas = lineas_completas
 
     centro_y = (y_arriba_texto + y_abajo_texto) // 2
     y_inicio = centro_y - (len(lineas) * alto_linea) // 2
