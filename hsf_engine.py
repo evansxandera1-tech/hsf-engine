@@ -3315,7 +3315,7 @@ if __name__ == "__main__":
 # falla, cae a generar_miniatura (frame simple del video).
 # ============================================================
 POLLINATIONS_API_KEY = os.environ.get("POLLINATIONS_API_KEY")
-POLLINATIONS_MODELO_IMAGEN = "nanobanana"
+POLLINATIONS_MODELO_IMAGEN = "gptimage-large"
 
 
 def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, imagen_referencia=None):
@@ -3432,7 +3432,7 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
     )
 
     cuerpo = {
-        "prompt": prompt, "model": "flux",
+        "prompt": prompt, "model": "gptimage-large",
         "size": "1280x720", "response_format": "b64_json",
     }
     intentos_maximos, espera = 3, 5
