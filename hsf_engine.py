@@ -3432,7 +3432,7 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
     )
 
     cuerpo = {
-        "prompt": prompt, "model": "nanobanana-pro",
+        "prompt": prompt, "model": "flux",
         "size": "1280x720", "response_format": "b64_json",
     }
     intentos_maximos, espera = 3, 5
