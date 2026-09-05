@@ -11,3 +11,8 @@ intro_resumen.pn
 miniatura_local_gdrive/
 intro_local_gdrive/
 generar_miniatura.p
+videos_hsf/
+gameplay_local_gdrive/
+*.bak
+*.bak[0-9]
+*.p

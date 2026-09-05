@@ -60,6 +60,11 @@ jobs:
           if not guion:
               raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
 
+          # Titulo real (mismo criterio que usa _pipeline_video_automatico):
+          # antes esto se sacaba de resultado.get("titulo"), que no existe
+          # en ningun lado y siempre daba el generico "Video de prueba (2 min)".
+          titulo_resumen = os.path.splitext(nombre_archivo_texto)[0].replace("_", " ").strip()
+
           # ---- Resumir la historia completa a ~2 minutos narrados (solo prueba) ----
           guion_original = guion
           if GEMINI_API_KEY:
@@ -68,7 +73,7 @@ jobs:
                   "manteniendo el mismo estilo, tono y persona narrativa (no cambies "
                   "'yo' por 'ella/el'), conservando el inicio, el conflicto principal, "
                   "el giro/revelacion mas importante y el cierre. El resultado debe "
-                  "poder narrarse en voz alta en aproximadamente 2 minutos (apuntá a "
+                  "poder narrarse en voz alta en aproximadamente 2 minutos (apunta a "
                   "unas 280-320 palabras). No agregues comentarios ni titulos, "
                   "devolve SOLO el texto resumido de la historia.\n\n"
                   f"HISTORIA ORIGINAL:\n{guion_original.strip()[:6000]}"
@@ -143,14 +148,19 @@ jobs:
           else:
               print("El video ya quedo dentro de los 2 minutos gracias al resumen, no hizo falta recortar.")
 
+          logger_subida = logging.getLogger("subida_youtube_test")
+          logger_subida.addHandler(logging.StreamHandler())
+          logger_subida.setLevel(logging.INFO)
+
           hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
               "ruta_video": ruta_video_absoluta,
-              "titulo_resumen": resultado.get("titulo") or "Video de prueba (2 min)",
+              "titulo_resumen": titulo_resumen,
+              "guion": guion,
               "subreddits": [],
               "cantidad_historias": 1,
               "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
           }
 
-          _subir_ultimo_resultado_a_youtube(logger)
-          _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger)
+          _subir_ultimo_resultado_a_youtube(logger_subida)
+          _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger_subida)
           PYEOF

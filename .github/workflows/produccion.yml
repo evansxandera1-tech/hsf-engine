@@ -44,53 +44,24 @@ jobs:
         run: |
           python3 << 'PYEOF'
           import logging
-          import os
           import hsf_engine
           from hsf_engine import (
-              procesar_todo, _elegir_texto_desde_drive, _marcar_texto_usado_en_drive,
-              _elegir_gameplay_desde_drive,
-              _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
-              FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
-              VELOCIDAD_EFECTO_POR_DEFECTO,
+              _pipeline_video_automatico, _subir_ultimo_resultado_a_youtube,
+              crear_logger_video,
           )
 
-          logger = logging.getLogger("produccion")
-          logger.addHandler(logging.StreamHandler())
-          logger.setLevel(logging.INFO)
+          # Se usa la funcion real del motor en vez de reimplementar la logica
+          # aca (eso fue lo que causaba que el titulo/miniatura salieran
+          # genericos: el workflow armaba el resultado a mano y le faltaba
+          # el titulo real y la historia completa).
+          logger, ruta_log = crear_logger_video()
+          _pipeline_video_automatico(logger, ruta_log)
 
-          guion, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
-          if not guion:
-              raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
-
-          ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
-          if not ruta_gameplay:
-              raise RuntimeError("No se encontro gameplay disponible en gameplay_slither.")
-
-          procesar_todo(
-              guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
-              False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
-              opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
-              efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
-              fondo_gameplay=True, ruta_gameplay=ruta_gameplay,
-              logger=logger, ruta_log=None,
-          )
-
-          with CANDADO_ESTADO:
-              resultado = dict(ESTADO.get("resultado") or {})
-          if not resultado.get("video"):
-              raise RuntimeError(f"El pipeline de video fallo: {resultado.get('mensaje', 'sin detalle')}")
-
-          ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado["video"])
-          print("Video generado en:", ruta_video_absoluta)
-
-          hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
-              "ruta_video": ruta_video_absoluta,
-              "titulo_resumen": resultado.get("titulo") or "Video generado automaticamente",
-              "subreddits": [],
-              "cantidad_historias": 1,
-              "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
-          }
-
-          _subir_ultimo_resultado_a_youtube(logger)
-          _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger)
+          # Logger nuevo para la subida: el de arriba se cierra solo al
+          # terminar de generar el video (cerrar_logger_video), y si se
+          # reusa se pierden los logs de esta parte.
+          logger_subida = logging.getLogger("subida_youtube")
+          logger_subida.addHandler(logging.StreamHandler())
+          logger_subida.setLevel(logging.INFO)
+          _subir_ultimo_resultado_a_youtube(logger_subida)
           PYEOF

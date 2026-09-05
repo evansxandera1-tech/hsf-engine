@@ -40,7 +40,6 @@ Jinja2==3.1.6
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
-moviepy==2.2.1
 multidict==6.7.1
 numpy==2.4.4
 oauthlib==3.3.1
@@ -60,7 +59,6 @@ PyYAML==6.0.3
 requests==2.34.2
 requests-oauthlib==2.0.0
 rich==15.0.0
-scrapetube==2.6.0
 tabulate==0.10.0
 toml==0.10.2
 tqdm==4.70.0
@@ -70,4 +68,3 @@ urllib3==2.7.0
 watchfiles==1.2.0
 Werkzeug==3.1.8
 yarl==1.24.5
-yt-dlp==2026.8.19

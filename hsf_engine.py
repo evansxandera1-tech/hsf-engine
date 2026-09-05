@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "5.4"
+VERSION_SCRIPT = "5.5"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -704,7 +704,6 @@ VOZ_NARRADOR = "es-PE-AlexNeural"
 # Voz para el audio en inglés adaptado (v3.4). Pitch y velocidad quedan
 # fijos (no editables desde la interfaz por ahora, a diferencia de la voz
 # en español que sí tiene sliders).
-VOZ_NARRADOR_INGLES = "en-GB-RyanNeural"
 TONO_NARRADOR_INGLES = "+0Hz"
 VELOCIDAD_NARRADOR_INGLES = "-10%"
 
