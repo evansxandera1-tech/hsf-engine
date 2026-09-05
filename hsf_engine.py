@@ -3314,7 +3314,7 @@ if __name__ == "__main__":
 # falla, cae a generar_miniatura (frame simple del video).
 # ============================================================
 POLLINATIONS_API_KEY = os.environ.get("POLLINATIONS_API_KEY")
-POLLINATIONS_MODELO_IMAGEN = "gptimage-large"
+POLLINATIONS_MODELO_IMAGEN = "seedream-pro"
 
 
 def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, imagen_referencia=None):
@@ -3429,7 +3429,7 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
     )
 
     cuerpo = {
-        "prompt": prompt, "model": "gptimage-large",
+        "prompt": prompt, "model": "seedream-pro",
         "size": f"{ANCHO}x{ALTO}", "response_format": "b64_json",
     }
     ruta_fondo = ruta_salida + ".fondo_tmp.png"
