@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "5.5"
+VERSION_SCRIPT = "5.6"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -3377,64 +3377,64 @@ def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, im
 
 
 def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salida, logger=None, historia_completa=None):
-    """Genera la miniatura COMPLETA (foto + titulo + franja + logo, todo
-    'quemado' directamente por el modelo de IA en una sola imagen) usando
-    nanobanana-pro via Pollinations. El propio modelo decide si mostrar 1,
-    2 o 3 personas segun el conflicto del titulo/franja, manteniendo
-    identidad visual fija (logo, tipografia, colores) entre miniaturas.
-    Si falla o no hay API key, devuelve None y la cadena de miniaturas cae
-    al siguiente metodo (generar_miniatura_nueva)."""
+    """Genera la miniatura en dos etapas:
+    1) nanobanana-pro (Pollinations) genera SOLO la foto de fondo dramatica
+       con degradado oscuro arriba/abajo (sin texto, sin logo, sin franja:
+       eso evita el problema conocido de estos modelos de IA de dibujar mal
+       el texto/logo).
+    2) Pillow (deterministico, sin IA) dibuja encima: la franja roja solida
+       abajo, el logo real (assets/logo_hsf.png), el titulo en mayuscula con
+       anton_black.ttf (ultima palabra en amarillo) y la frase de la franja.
+    Si algo falla o no hay API key, devuelve None y la cadena de miniaturas
+    cae al siguiente metodo (generar_miniatura_nueva)."""
+    from PIL import Image, ImageDraw, ImageFont
+
     if not POLLINATIONS_API_KEY:
         if logger:
             logger.warning("POLLINATIONS_API_KEY vacia: no se genera miniatura nanobanana-pro.")
         return None
 
+    ANCHO, ALTO = 1280, 720
+
     titular = titulo_miniatura.strip().upper()
     if len(titular) > 70:
         titular = titular[:69].rstrip() + "…"
 
-    franja = _generar_pregunta_miniatura(historia_completa or resumen_texto, logger=logger)
+    franja_texto = _generar_pregunta_miniatura(historia_completa or resumen_texto, logger=logger).strip().upper()
 
     prompt = (
-        "Miniatura de YouTube fotorrealista, una sola imagen a pantalla completa "
-        "(sin paneles ni tarjetas separadas). Analiza el titular y la frase de la "
-        "franja roja que se muestran abajo, interpreta de que trata el conflicto, "
-        "y genera una escena fotorrealista que represente ese conflicto de forma "
-        "dramatica: si el texto sugiere una confrontacion directa entre dos "
-        "personas (traicion, pelea, acusacion), muestra 2 personas cara a cara; "
-        "si el texto sugiere un conflicto con un tercero involucrado, muestra 3 "
-        "personas con roles claros; si el texto sugiere un descubrimiento o "
-        "momento intimo y solitario, muestra 1 sola persona en primer plano. "
-        "La escena debe ser SIEMPRE en primer plano o medio plano, con el/los "
+        "Fotografia fotorrealista a pantalla completa, sin texto, sin letras, "
+        "sin logos, sin marcas de agua, sin paneles ni tarjetas. Analiza el "
+        "titular y la frase que se muestran abajo, interpreta de que trata el "
+        "conflicto, y genera una escena fotorrealista que lo represente de "
+        "forma dramatica: si sugiere una confrontacion directa entre dos "
+        "personas (traicion, pelea, acusacion), muestra 2 personas cara a "
+        "cara; si sugiere un conflicto con un tercero involucrado, muestra 3 "
+        "personas con roles claros; si sugiere un descubrimiento o momento "
+        "intimo y solitario, muestra 1 sola persona en primer plano. La "
+        "escena debe ser SIEMPRE en primer plano o medio plano, con el/los "
         "rostro(s) ocupando gran parte del frame (nunca personas chicas o "
-        "lejanas). Debe ocurrir dentro de una casa, con iluminacion dramatica de "
-        "cine tipo thriller usando siempre luz lateral proveniente de una "
-        "ventana, sombras marcadas, y SIEMPRE el mismo tono de color "
-        "frio/desaturado con tinte azulado en las sombras, para mantener "
-        "identidad visual consistente entre miniaturas. Expresiones faciales de "
-        "dolor, ira contenida o shock genuino (no actuadas). Con un degradado "
-        "oscuro semitransparente que cubre la parte superior e inferior de la "
-        "imagen para que el texto se lea bien encima de la foto. "
-        "Arriba a la izquierda, chico: un logo circular rojo/bordo con las letras "
-        "'HSF' y al lado el texto blanco 'Historia Sin Filtro', SIEMPRE del mismo "
-        "tamano y posicion exacta. "
-        "Debajo de eso, ocupando la parte superior, un titular en mayuscula, "
-        "fuente gruesa tipo impact, SIEMPRE color blanco con la ultima palabra "
-        f"clave en amarillo, texto exacto: '{titular}'. "
-        "Abajo del todo, SIEMPRE una franja roja solida (mismo tono de rojo) de "
-        f"ancho completo con texto blanco en mayuscula: '{franja}'. "
-        "Estilo miniatura de YouTube clickbait de historias reales tipo true "
-        "crime/drama familiar, sin marco ni borde de color, sin panel blanco, "
-        "todo el texto quemado directamente sobre la foto, letras grandes con "
-        "buen espacio entre lineas para que no se pisen entre si. Resolucion "
-        "1280x720."
+        "lejanas). Debe ocurrir dentro de una casa, con iluminacion "
+        "dramatica de cine tipo thriller usando siempre luz lateral "
+        "proveniente de una ventana, sombras marcadas, y SIEMPRE el mismo "
+        "tono de color frio/desaturado con tinte azulado en las sombras, "
+        "para mantener identidad visual consistente entre miniaturas. "
+        "Expresiones faciales de dolor, ira contenida o shock genuino (no "
+        "actuadas). Con un degradado oscuro semitransparente que cubre la "
+        "parte superior e inferior de la imagen. Estilo miniatura de "
+        "YouTube clickbait de historias reales tipo true crime/drama "
+        "familiar. Contexto (no lo escribas en la imagen) — titular: "
+        f"'{titular}'. Frase: '{franja_texto}'. "
+        f"Resolucion {ANCHO}x{ALTO}."
     )
 
     cuerpo = {
         "prompt": prompt, "model": "gptimage-large",
-        "size": "1280x720", "response_format": "b64_json",
+        "size": f"{ANCHO}x{ALTO}", "response_format": "b64_json",
     }
+    ruta_fondo = ruta_salida + ".fondo_tmp.png"
     intentos_maximos, espera = 3, 5
+    fondo_ok = False
     for intento in range(1, intentos_maximos + 1):
         try:
             resp = requests.post(
@@ -3448,20 +3448,117 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
                 time.sleep(espera); espera *= 2; continue
             resp.raise_for_status()
             datos_b64 = resp.json()["data"][0]["b64_json"]
-            with open(ruta_salida, "wb") as f:
+            with open(ruta_fondo, "wb") as f:
                 f.write(base64.b64decode(datos_b64))
-            if logger:
-                logger.info(f"Miniatura nanobanana-pro generada: {ruta_salida}")
-            return ruta_salida
+            fondo_ok = True
+            break
         except Exception as e:
             if intento >= intentos_maximos:
                 if logger:
-                    logger.warning(f"Fallo generar_miniatura_nanobanana_pro tras {intentos_maximos} intentos: {e}")
+                    logger.warning(f"Fallo al generar el fondo IA (nanobanana-pro) tras {intentos_maximos} intentos: {e}")
                 return None
             time.sleep(espera); espera *= 2
-    return None
 
+    if not fondo_ok:
+        return None
 
+    try:
+        base = Image.open(ruta_fondo).convert("RGB").resize((ANCHO, ALTO))
+        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        RUTA_FUENTE_ANTON = os.path.join(CARPETA_FUENTES, "anton_black.ttf")
+        RUTA_LOGO = os.path.join(CARPETA_BASE, "assets", "logo_hsf.png")
+
+        def _fuente(tamano):
+            try:
+                return ImageFont.truetype(RUTA_FUENTE_ANTON, tamano)
+            except Exception:
+                return ImageFont.load_default()
+
+        AMARILLO = (255, 214, 0, 255)
+        BLANCO = (255, 255, 255, 255)
+        ROJO_FRANJA = (176, 20, 20, 255)
+
+        ALTO_FRANJA = 90
+        draw.rectangle(
+            [(0, ALTO - ALTO_FRANJA), (ANCHO, ALTO)],
+            fill=ROJO_FRANJA,
+        )
+
+        try:
+            logo = Image.open(RUTA_LOGO).convert("RGBA")
+            logo_alto_destino = 70
+            proporcion = logo_alto_destino / logo.height
+            logo = logo.resize((int(logo.width * proporcion), logo_alto_destino))
+            overlay.paste(logo, (24, 20), logo)
+        except Exception as e:
+            if logger:
+                logger.warning(f"No se pudo pegar el logo real en la miniatura: {e}")
+
+        def _dibujar_titulo_multilinea(texto, y_inicial, tamano_fuente, max_ancho, interlineado=1.08):
+            fuente = _fuente(tamano_fuente)
+            palabras = texto.split()
+            lineas, actual = [], []
+            for palabra in palabras:
+                prueba = " ".join(actual + [palabra])
+                ancho_prueba = draw.textbbox((0, 0), prueba, font=fuente)[2]
+                if ancho_prueba > max_ancho and actual:
+                    lineas.append(actual)
+                    actual = [palabra]
+                else:
+                    actual.append(palabra)
+            if actual:
+                lineas.append(actual)
+
+            alto_linea = int(tamano_fuente * interlineado)
+            y = y_inicial
+            for i, palabras_linea in enumerate(lineas):
+                es_ultima_linea_del_titulo = (i == len(lineas) - 1)
+                x = 24
+                for j, palabra in enumerate(palabras_linea):
+                    es_ultima_palabra_global = es_ultima_linea_del_titulo and j == len(palabras_linea) - 1
+                    color = AMARILLO if es_ultima_palabra_global else BLANCO
+                    texto_palabra = palabra + (" " if j < len(palabras_linea) - 1 else "")
+                    for dx in (-3, 0, 3):
+                        for dy in (-3, 0, 3):
+                            if dx or dy:
+                                draw.text((x + dx, y + dy), texto_palabra, font=fuente, fill=(0, 0, 0, 255))
+                    draw.text((x, y), texto_palabra, font=fuente, fill=color)
+                    x += draw.textbbox((0, 0), texto_palabra, font=fuente)[2]
+                y += alto_linea
+            return y
+
+        _dibujar_titulo_multilinea(titular, y_inicial=104, tamano_fuente=64, max_ancho=ANCHO - 48)
+
+        fuente_franja = _fuente(38)
+        ancho_frase = draw.textbbox((0, 0), franja_texto, font=fuente_franja)[2]
+        if ancho_frase > ANCHO - 48:
+            tamano = 38
+            while ancho_frase > ANCHO - 48 and tamano > 20:
+                tamano -= 2
+                fuente_franja = _fuente(tamano)
+                ancho_frase = draw.textbbox((0, 0), franja_texto, font=fuente_franja)[2]
+        x_frase = (ANCHO - ancho_frase) // 2
+        y_frase = ALTO - ALTO_FRANJA + (ALTO_FRANJA - fuente_franja.size) // 2 - 4
+        draw.text((x_frase, y_frase), franja_texto, font=fuente_franja, fill=BLANCO)
+
+        resultado = Image.alpha_composite(base.convert("RGBA"), overlay).convert("RGB")
+        resultado.save(ruta_salida)
+
+        if logger:
+            logger.info(f"Miniatura nanobanana-pro (fondo IA + Pillow) generada: {ruta_salida}")
+        return ruta_salida
+    except Exception as e:
+        if logger:
+            logger.warning(f"Fallo al componer la miniatura con Pillow: {e}")
+        return None
+    finally:
+        try:
+            if os.path.exists(ruta_fondo):
+                os.remove(ruta_fondo)
+        except Exception:
+            pass
 def _mf_buscar_fuente_condensada():
     if not os.path.isdir(CARPETA_FUENTES):
         return None
