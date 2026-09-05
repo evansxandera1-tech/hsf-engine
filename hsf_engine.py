@@ -2055,20 +2055,6 @@ def procesar_todo(texto_bruto, frases_por_bloque, posicion, color_sub, tamano_su
         # suelto en videos_hsf/.
         ruta_relativa_video = f"{proyecto['nombre_proyecto']}/{nombre_final}"
 
-        # Intro con la misma tarjeta de la miniatura + un resumen corto,
-        # superpuesta sobre los primeros segundos del video (si hay
-        # plantilla disponible en Drive). Si falla, no corta el video:
-        # simplemente queda sin esa intro.
-        ruta_plantilla_intro = _obtener_plantilla_intro_desde_drive(logger=logger)
-        if ruta_plantilla_intro:
-            resumen_intro = " ".join(texto_bruto.split())[:100]
-            if " " in resumen_intro:
-                resumen_intro = resumen_intro.rsplit(" ", 1)[0]
-            ruta_con_intro = ruta_final + ".intro.mp4"
-            ok_intro = agregar_intro_resumen(ruta_final, ruta_plantilla_intro, resumen_intro, ruta_con_intro, duracion_intro=12.0, logger=logger)
-            if ok_intro:
-                os.replace(ruta_con_intro, ruta_final)
-
         with CANDADO_ESTADO:
             _cerrar_fase_actual()
             ESTADO["porcentaje"], ESTADO["fase"], ESTADO["terminado"], ESTADO["activo"] = 100, "listo", True, False
