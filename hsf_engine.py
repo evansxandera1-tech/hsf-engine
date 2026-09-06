@@ -2398,6 +2398,41 @@ def _obtener_plantilla_intro_desde_drive(logger=None):
         return None
 
 
+def _llamar_gemini(prompt, timeout=30, intentos_maximos=4, logger=None, etiqueta="Gemini"):
+    """Llama a Gemini con reintentos (backoff exponencial) para no perder
+    la miniatura/titulo por un 503/429 puntual o un timeout. Reintenta en
+    503, 429 y timeouts/errores de red; NO reintenta en 400/401/403 (esos
+    no se arreglan reintentando). Devuelve el texto de la respuesta o
+    None si se agotan los intentos."""
+    espera = 2
+    for intento in range(1, intentos_maximos + 1):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=timeout,
+            )
+            if resp.status_code in (429, 503) and intento < intentos_maximos:
+                if logger:
+                    logger.warning(f"{etiqueta}: {resp.status_code}, reintentando en {espera}s (intento {intento}/{intentos_maximos})...")
+                time.sleep(espera)
+                espera *= 2
+                continue
+            resp.raise_for_status()
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+        except Exception as e:
+            if intento >= intentos_maximos:
+                if logger:
+                    logger.warning(f"{etiqueta}: fallo tras {intentos_maximos} intentos: {e}")
+                return None
+            if logger:
+                logger.warning(f"{etiqueta}: error ({e}), reintentando en {espera}s (intento {intento}/{intentos_maximos})...")
+            time.sleep(espera)
+            espera *= 2
+    return None
+
+
 def _generar_texto_miniatura(historia_completa, resumen_texto, titulo_youtube="", logger=None):
     """Usa Gemini con la historia COMPLETA (sin recortar, aunque tenga
     8-10 mil palabras) para redactar el texto blanco que va dentro de la
@@ -2430,70 +2465,13 @@ def _generar_texto_miniatura(historia_completa, resumen_texto, titulo_youtube=""
         f"Titulo del video (no lo repitas): {titulo_youtube}\n\n"
         f"Historia completa:\n{texto_base}"
     )
-    try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=45,
-        )
-        resp.raise_for_status()
-        texto = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
-        if not texto:
-            return _respaldo()
-        texto = texto.upper()
-        if len(texto) > 200:
-            texto = texto[:197].rstrip() + "…"
-        return texto
-    except Exception as e:
-        if logger:
-            logger.warning(f"Fallo al generar el texto de miniatura con Gemini: {e}")
+    texto = _llamar_gemini(prompt, timeout=45, logger=logger, etiqueta="texto de miniatura")
+    if not texto:
         return _respaldo()
-
-
-def _generar_prompt_imagen_miniatura(resumen_texto, historia_completa=None, logger=None):
-    """Usa Gemini para redactar (en ingles) la descripcion de la escena
-    fotorrealista para la miniatura, a partir del resumen o la parte mas
-    intrigante de la historia. Devuelve solo la descripcion de la escena
-    (personas, expresion, ambiente) - las reglas fijas de composicion
-    (sujeto a la izquierda, sin tono azul, etc.) se agregan aparte en
-    generar_miniatura_nanobanana_pro para que siempre se respeten igual.
-    Si Gemini falla o no hay API key, devuelve None (se usa un texto de
-    respaldo generico)."""
-    texto_base = (historia_completa or resumen_texto or "")[:1500]
-    if not GEMINI_API_KEY or not texto_base.strip():
-        return None
-
-    prompt_gemini = (
-        "Lee este resumen de una historia real dramatica (en espanol) y "
-        "elige el momento o detalle mas intrigante/impactante de ella "
-        "(el giro, la confrontacion o el descubrimiento clave). A partir "
-        "de eso, escribe en INGLES una descripcion corta (2-4 frases) de "
-        "una escena fotorrealista tipo foto de retrato que represente ese "
-        "momento: cuantas personas hay (1, 2 o 3, segun si es un momento "
-        "intimo/solitario o una confrontacion), quienes son (edad/genero "
-        "aproximado, relacion entre ellos si aplica), su expresion facial "
-        "(dolor, shock, ira contenida, tristeza — nunca actuada ni "
-        "exagerada), y el lugar/ambiente (ej. interior de una casa, "
-        "cocina, living, auto, oficina). NO describas iluminacion, color, "
-        "ni composicion (eso se agrega despues). NO escribas nada mas que "
-        "esa descripcion de la escena, sin explicaciones ni comillas.\n\n"
-        f"Resumen de la historia:\n{texto_base}"
-    )
-    try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt_gemini}]}]},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        descripcion = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
-        return descripcion if descripcion else None
-    except Exception as e:
-        if logger:
-            logger.warning(f"Fallo al generar la descripcion de escena con Gemini: {e}")
-        return None
+    texto = texto.upper()
+    if len(texto) > 200:
+        texto = texto[:197].rstrip() + "…"
+    return texto
 
 
 def _generar_pregunta_miniatura(resumen_texto, logger=None):
@@ -2507,23 +2485,11 @@ def _generar_pregunta_miniatura(resumen_texto, logger=None):
     if not GEMINI_API_KEY:
         return _respaldo()
 
-    try:
-        prompt = PROMPT_PREGUNTA_MINIATURA.format(resumen=resumen_texto[:600])
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        pregunta = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
-        if not pregunta:
-            return _respaldo()
-        return pregunta.upper()
-    except Exception as e:
-        if logger:
-            logger.warning(f"Fallo al generar la pregunta de miniatura con Gemini: {e}")
+    prompt = PROMPT_PREGUNTA_MINIATURA.format(resumen=resumen_texto[:600])
+    pregunta = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="pregunta de miniatura")
+    if not pregunta:
         return _respaldo()
+    return pregunta.upper()
 
 
 def _armar_titulo_youtube(titulo_resumen, subreddits, logger=None):
@@ -2545,25 +2511,13 @@ def _armar_titulo_youtube(titulo_resumen, subreddits, logger=None):
     if not GEMINI_API_KEY:
         return _respaldo()
 
-    try:
-        prompt = PROMPT_TITULO_YOUTUBE.format(titulo=titulo_original)
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        titulo_gemini = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
-        if not titulo_gemini:
-            return _respaldo()
-        if len(titulo_gemini) > disponible:
-            titulo_gemini = titulo_gemini[:disponible - 1].rstrip() + "…"
-        return titulo_gemini + sufijo
-    except Exception as e:
-        if logger:
-            logger.warning(f"Fallo al generar título con Gemini, se usa el título original: {e}")
+    prompt = PROMPT_TITULO_YOUTUBE.format(titulo=titulo_original)
+    titulo_gemini = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="titulo de YouTube")
+    if not titulo_gemini:
         return _respaldo()
+    if len(titulo_gemini) > disponible:
+        titulo_gemini = titulo_gemini[:disponible - 1].rstrip() + "…"
+    return titulo_gemini + sufijo
 
 
 def generar_miniatura(ruta_video, titulo_miniatura, ruta_salida, logger=None):
@@ -2699,24 +2653,12 @@ def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
     if not GEMINI_API_KEY or not historia_completa:
         return None
 
-    try:
-        prompt = PROMPT_IMAGEN_MINIATURA.format(
-            titulo=titulo.strip(),
-            historia=historia_completa.strip()[:4000],
-        )
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        prompt_imagen = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
-        return prompt_imagen or None
-    except Exception as e:
-        if logger:
-            logger.warning(f"Fallo al generar prompt de imagen con Gemini, se usa el generico: {e}")
-        return None
+    prompt = PROMPT_IMAGEN_MINIATURA.format(
+        titulo=titulo.strip(),
+        historia=historia_completa.strip()[:4000],
+    )
+    prompt_imagen = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="prompt de imagen")
+    return prompt_imagen or None
 
 
 def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None, historia_completa=None):
@@ -3487,7 +3429,7 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
     franja_texto = _generar_pregunta_miniatura(historia_completa or resumen_texto, logger=logger).strip().upper()
 
     descripcion_escena = _generar_prompt_imagen_miniatura(
-        titular, historia_completa=historia_completa, logger=logger
+        historia_completa or resumen_texto, titulo_miniatura, logger=logger
     )
     if not descripcion_escena:
         descripcion_escena = (
