@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "5.6"
+VERSION_SCRIPT = "5.7"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -3398,16 +3398,18 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
         "cara; si sugiere un conflicto con un tercero involucrado, muestra 3 "
         "personas con roles claros; si sugiere un descubrimiento o momento "
         "intimo y solitario, muestra 1 sola persona en primer plano. La "
-        "escena debe ser SIEMPRE en primer plano o medio plano, con el/los "
-        "rostro(s) ocupando gran parte del frame (nunca personas chicas o "
-        "lejanas). Debe ocurrir dentro de una casa, con iluminacion "
-        "dramatica de cine tipo thriller usando siempre luz lateral "
-        "proveniente de una ventana, sombras marcadas, y SIEMPRE el mismo "
-        "tono de color frio/desaturado con tinte azulado en las sombras, "
-        "para mantener identidad visual consistente entre miniaturas. "
-        "Expresiones faciales de dolor, ira contenida o shock genuino (no "
-        "actuadas). Con un degradado oscuro semitransparente que cubre la "
-        "parte superior e inferior de la imagen. Estilo miniatura de "
+        "escena debe ser SIEMPRE en primer plano o medio plano tipo retrato, "
+        "con el/los rostro(s) ocupando gran parte del frame (nunca personas "
+        "chicas o lejanas). Los sujetos deben estar ubicados sobre el LADO "
+        "IZQUIERDO del encuadre, dejando el lado derecho de la imagen mas "
+        "despejado y con fondo desenfocado (bokeh), para que ahi se pueda "
+        "superponer texto despues. Iluminacion de retrato cinematografico "
+        "suave y natural (como una foto de estudio o luz de ventana difusa), "
+        "colores neutros y realistas, SIN tinte de color forzado. Fondo "
+        "oscuro y desenfocado tipo interior de una casa. Expresiones "
+        "faciales de dolor, tristeza contenida o shock genuino (no "
+        "actuadas). Con un leve degradado oscuro semitransparente que cubre "
+        "la parte superior e inferior de la imagen. Estilo miniatura de "
         "YouTube clickbait de historias reales tipo true crime/drama "
         "familiar. Contexto (no lo escribas en la imagen) — titular: "
         f"'{titular}'. Frase: '{franja_texto}'. "
