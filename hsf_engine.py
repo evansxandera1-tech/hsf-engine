@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "5.7"
+VERSION_SCRIPT = "5.9"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -2398,6 +2398,104 @@ def _obtener_plantilla_intro_desde_drive(logger=None):
         return None
 
 
+def _generar_texto_miniatura(historia_completa, resumen_texto, titulo_youtube="", logger=None):
+    """Usa Gemini con la historia COMPLETA (sin recortar, aunque tenga
+    8-10 mil palabras) para redactar el texto blanco que va dentro de la
+    miniatura: una frase dramatica/intrigante de 150 a 200 caracteres,
+    distinta al titulo de YouTube (no debe repetirlo ni parafrasearlo
+    igual). Si Gemini falla o no hay API key, arma un respaldo a partir
+    del resumen."""
+    texto_base = (historia_completa or resumen_texto or "").strip()
+
+    def _respaldo():
+        base = " ".join((resumen_texto or texto_base).split())
+        if len(base) > 200:
+            base = base[:197].rstrip() + "…"
+        return base.upper()
+
+    if not GEMINI_API_KEY or not texto_base:
+        return _respaldo()
+
+    prompt = (
+        "Lee esta historia real completa (en espanol) y elige el momento "
+        "o detalle mas intrigante/impactante para usar como texto de una "
+        "miniatura de YouTube. Escribe UNA sola frase en espanol, en "
+        "MAYUSCULAS, de entre 150 y 200 caracteres exactos de largo (ni "
+        "mas corta ni mas larga), tipo clickbait dramatico (puede ser una "
+        "pregunta o una afirmacion impactante). Esta frase NO debe repetir "
+        "ni parafrasear el titulo del video que se muestra abajo — tiene "
+        "que aportar un dato o giro DISTINTO y mas especifico de la "
+        "historia. No escribas nada mas que esa frase, sin comillas ni "
+        "explicaciones.\n\n"
+        f"Titulo del video (no lo repitas): {titulo_youtube}\n\n"
+        f"Historia completa:\n{texto_base}"
+    )
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+            headers={"x-goog-api-key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=45,
+        )
+        resp.raise_for_status()
+        texto = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+        if not texto:
+            return _respaldo()
+        texto = texto.upper()
+        if len(texto) > 200:
+            texto = texto[:197].rstrip() + "…"
+        return texto
+    except Exception as e:
+        if logger:
+            logger.warning(f"Fallo al generar el texto de miniatura con Gemini: {e}")
+        return _respaldo()
+
+
+def _generar_prompt_imagen_miniatura(resumen_texto, historia_completa=None, logger=None):
+    """Usa Gemini para redactar (en ingles) la descripcion de la escena
+    fotorrealista para la miniatura, a partir del resumen o la parte mas
+    intrigante de la historia. Devuelve solo la descripcion de la escena
+    (personas, expresion, ambiente) - las reglas fijas de composicion
+    (sujeto a la izquierda, sin tono azul, etc.) se agregan aparte en
+    generar_miniatura_nanobanana_pro para que siempre se respeten igual.
+    Si Gemini falla o no hay API key, devuelve None (se usa un texto de
+    respaldo generico)."""
+    texto_base = (historia_completa or resumen_texto or "")[:1500]
+    if not GEMINI_API_KEY or not texto_base.strip():
+        return None
+
+    prompt_gemini = (
+        "Lee este resumen de una historia real dramatica (en espanol) y "
+        "elige el momento o detalle mas intrigante/impactante de ella "
+        "(el giro, la confrontacion o el descubrimiento clave). A partir "
+        "de eso, escribe en INGLES una descripcion corta (2-4 frases) de "
+        "una escena fotorrealista tipo foto de retrato que represente ese "
+        "momento: cuantas personas hay (1, 2 o 3, segun si es un momento "
+        "intimo/solitario o una confrontacion), quienes son (edad/genero "
+        "aproximado, relacion entre ellos si aplica), su expresion facial "
+        "(dolor, shock, ira contenida, tristeza — nunca actuada ni "
+        "exagerada), y el lugar/ambiente (ej. interior de una casa, "
+        "cocina, living, auto, oficina). NO describas iluminacion, color, "
+        "ni composicion (eso se agrega despues). NO escribas nada mas que "
+        "esa descripcion de la escena, sin explicaciones ni comillas.\n\n"
+        f"Resumen de la historia:\n{texto_base}"
+    )
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+            headers={"x-goog-api-key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt_gemini}]}]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        descripcion = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+        return descripcion if descripcion else None
+    except Exception as e:
+        if logger:
+            logger.warning(f"Fallo al generar la descripcion de escena con Gemini: {e}")
+        return None
+
+
 def _generar_pregunta_miniatura(resumen_texto, logger=None):
     """Genera con Gemini la pregunta-dilema que va en la miniatura (estilo
     '¿Soy la mala por...?'). Si Gemini falla o no hay API key, arma una
@@ -3382,38 +3480,37 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
 
     ANCHO, ALTO = 1280, 720
 
-    titular = titulo_miniatura.strip().upper()
-    if len(titular) > 70:
-        titular = titular[:69].rstrip() + "…"
+    titular = _generar_texto_miniatura(
+        historia_completa, resumen_texto, titulo_youtube=titulo_miniatura, logger=logger
+    ).strip().upper()
 
     franja_texto = _generar_pregunta_miniatura(historia_completa or resumen_texto, logger=logger).strip().upper()
 
+    descripcion_escena = _generar_prompt_imagen_miniatura(
+        titular, historia_completa=historia_completa, logger=logger
+    )
+    if not descripcion_escena:
+        descripcion_escena = (
+            "One person in emotional distress, close-up portrait, inside a home."
+        )
+
     prompt = (
-        "Fotografia fotorrealista a pantalla completa, sin texto, sin letras, "
-        "sin logos, sin marcas de agua, sin paneles ni tarjetas. Analiza el "
-        "titular y la frase que se muestran abajo, interpreta de que trata el "
-        "conflicto, y genera una escena fotorrealista que lo represente de "
-        "forma dramatica: si sugiere una confrontacion directa entre dos "
-        "personas (traicion, pelea, acusacion), muestra 2 personas cara a "
-        "cara; si sugiere un conflicto con un tercero involucrado, muestra 3 "
-        "personas con roles claros; si sugiere un descubrimiento o momento "
-        "intimo y solitario, muestra 1 sola persona en primer plano. La "
-        "escena debe ser SIEMPRE en primer plano o medio plano tipo retrato, "
-        "con el/los rostro(s) ocupando gran parte del frame (nunca personas "
-        "chicas o lejanas). Los sujetos deben estar ubicados sobre el LADO "
-        "IZQUIERDO del encuadre, dejando el lado derecho de la imagen mas "
-        "despejado y con fondo desenfocado (bokeh), para que ahi se pueda "
-        "superponer texto despues. Iluminacion de retrato cinematografico "
-        "suave y natural (como una foto de estudio o luz de ventana difusa), "
-        "colores neutros y realistas, SIN tinte de color forzado. Fondo "
-        "oscuro y desenfocado tipo interior de una casa. Expresiones "
-        "faciales de dolor, tristeza contenida o shock genuino (no "
-        "actuadas). Con un leve degradado oscuro semitransparente que cubre "
-        "la parte superior e inferior de la imagen. Estilo miniatura de "
-        "YouTube clickbait de historias reales tipo true crime/drama "
-        "familiar. Contexto (no lo escribas en la imagen) — titular: "
-        f"'{titular}'. Frase: '{franja_texto}'. "
-        f"Resolucion {ANCHO}x{ALTO}."
+        "Photorealistic portrait photo, full frame, no text, no letters, "
+        "no logos, no watermarks, no panels or cards. Scene: "
+        f"{descripcion_escena} "
+        "COMPOSITION RULE (mandatory): the subject(s) must be positioned "
+        "on the LEFT third of the frame, close-up or medium shot with the "
+        "face(s) taking up a large part of that side. The RIGHT side of "
+        "the image must stay clear and out of focus (soft bokeh, no "
+        "people, no objects in focus there), so text can be placed on top "
+        "of it afterwards. LIGHTING RULE (mandatory): soft, natural studio "
+        "portrait lighting, neutral realistic colors. Do NOT use blue "
+        "color grading, do NOT use cold/teal tones, do NOT use hard "
+        "dramatic shadows or window-light silhouettes. Dark, softly "
+        "blurred background typical of a home interior. Add a subtle dark "
+        "semi-transparent gradient only at the very top and bottom edges "
+        "of the image. Style: realistic YouTube thumbnail for true "
+        f"stories/real-life drama content. Resolution {ANCHO}x{ALTO}."
     )
 
     cuerpo = {
@@ -3484,26 +3581,32 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
             if logger:
                 logger.warning(f"No se pudo pegar el logo real en la miniatura: {e}")
 
-        def _dibujar_titulo_multilinea(texto, y_inicial, tamano_fuente, max_ancho, interlineado=1.08):
-            fuente = _fuente(tamano_fuente)
+        X_TITULO = int(ANCHO * 0.44)
+        MAX_ANCHO_TITULO = ANCHO - X_TITULO - 24
+        MAX_ALTO_TITULO = ALTO - ALTO_FRANJA - 40
+
+        def _envolver_titulo(texto, fuente):
             palabras = texto.split()
             lineas, actual = [], []
             for palabra in palabras:
                 prueba = " ".join(actual + [palabra])
-                ancho_prueba = draw.textbbox((0, 0), prueba, font=fuente)[2]
-                if ancho_prueba > max_ancho and actual:
+                if draw.textbbox((0, 0), prueba, font=fuente)[2] > MAX_ANCHO_TITULO and actual:
                     lineas.append(actual)
                     actual = [palabra]
                 else:
                     actual.append(palabra)
             if actual:
                 lineas.append(actual)
+            return lineas
 
+        def _dibujar_titulo_multilinea(texto, y_inicial, tamano_fuente, x_inicio, interlineado=1.08):
+            fuente = _fuente(tamano_fuente)
+            lineas = _envolver_titulo(texto, fuente)
             alto_linea = int(tamano_fuente * interlineado)
             y = y_inicial
             for i, palabras_linea in enumerate(lineas):
                 es_ultima_linea_del_titulo = (i == len(lineas) - 1)
-                x = 24
+                x = x_inicio
                 for j, palabra in enumerate(palabras_linea):
                     es_ultima_palabra_global = es_ultima_linea_del_titulo and j == len(palabras_linea) - 1
                     color = AMARILLO if es_ultima_palabra_global else BLANCO
@@ -3517,7 +3620,26 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
                 y += alto_linea
             return y
 
-        _dibujar_titulo_multilinea(titular, y_inicial=104, tamano_fuente=64, max_ancho=ANCHO - 48)
+        # El texto ahora tiene 150-200 caracteres (antes eran ~70), asi que
+        # el tamano de fuente se elige dinamicamente probando de mayor a
+        # menor hasta que entre en el espacio disponible (arriba de la
+        # franja roja) sin salirse.
+        candidatos_tamano = [58, 52, 46, 40, 36, 32, 28, 25, 22]
+        tamano_elegido, alto_linea_elegido, lineas_elegidas = candidatos_tamano[-1], 30, []
+        for tamano in candidatos_tamano:
+            fuente_prueba = _fuente(tamano)
+            lineas_prueba = _envolver_titulo(titular, fuente_prueba)
+            alto_linea_prueba = int(tamano * 1.08)
+            if len(lineas_prueba) * alto_linea_prueba <= MAX_ALTO_TITULO:
+                tamano_elegido, alto_linea_elegido, lineas_elegidas = tamano, alto_linea_prueba, lineas_prueba
+                break
+        else:
+            tamano_elegido = candidatos_tamano[-1]
+
+        alto_total_titulo = len(lineas_elegidas or _envolver_titulo(titular, _fuente(tamano_elegido))) * alto_linea_elegido
+        y_inicial_titulo = max(30, (MAX_ALTO_TITULO - alto_total_titulo) // 2 + 20)
+
+        _dibujar_titulo_multilinea(titular, y_inicial=y_inicial_titulo, tamano_fuente=tamano_elegido, x_inicio=X_TITULO)
 
         fuente_franja = _fuente(38)
         ancho_frase = draw.textbbox((0, 0), franja_texto, font=fuente_franja)[2]
