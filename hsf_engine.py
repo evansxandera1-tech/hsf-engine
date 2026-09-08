@@ -3436,29 +3436,38 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
             "One person in emotional distress, close-up portrait, inside a home."
         )
 
+    ruta_plantilla_referencia = _obtener_plantilla_miniatura_desde_drive(logger=logger)
+    imagen_referencia_b64 = None
+    if ruta_plantilla_referencia and os.path.exists(ruta_plantilla_referencia):
+        try:
+            with open(ruta_plantilla_referencia, "rb") as f:
+                imagen_referencia_b64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            if logger:
+                logger.warning(f"No se pudo leer la plantilla de referencia: {e}")
+
     prompt = (
-        "Photorealistic portrait photo, full frame, no text, no letters, "
-        "no logos, no watermarks, no panels or cards. Scene: "
-        f"{descripcion_escena} "
-        "COMPOSITION RULE (mandatory): the subject(s) must be positioned "
-        "on the LEFT third of the frame, close-up or medium shot with the "
-        "face(s) taking up a large part of that side. The RIGHT side of "
-        "the image must stay clear and out of focus (soft bokeh, no "
-        "people, no objects in focus there), so text can be placed on top "
-        "of it afterwards. LIGHTING RULE (mandatory): soft, natural studio "
-        "portrait lighting, neutral realistic colors. Do NOT use blue "
-        "color grading, do NOT use cold/teal tones, do NOT use hard "
-        "dramatic shadows or window-light silhouettes. Dark, softly "
-        "blurred background typical of a home interior. Add a subtle dark "
-        "semi-transparent gradient only at the very top and bottom edges "
-        "of the image. Style: realistic YouTube thumbnail for true "
-        f"stories/real-life drama content. Resolution {ANCHO}x{ALTO}."
+        "16:9 dark suspense comic book illustration, noir style, thick ink "
+        "outlines, heavy crosshatch shadows, high contrast, cinematic "
+        "tension, cold blue and dark teal color palette. Use the reference "
+        "image as the exact art style, lighting and composition guide. "
+        f"Scene: {descripcion_escena} "
+        "COMPOSITION RULE (mandatory): the scene/subject(s) must occupy "
+        "ONLY the LEFT half of the frame. The RIGHT half of the image must "
+        "be solid black negative space, completely empty and clean, no "
+        "objects, no texture, no gradient details, so text can be placed "
+        "on top of it afterwards. Comic book art style, NOT photorealism. "
+        "Absolutely no text, no letters, no words, no logos, no "
+        "identifiable faces. "
+        f"Resolution {ANCHO}x{ALTO}."
     )
 
     cuerpo = {
         "prompt": prompt, "model": "seedream-pro",
         "size": f"{ANCHO}x{ALTO}", "response_format": "b64_json",
     }
+    if imagen_referencia_b64:
+        cuerpo["image"] = imagen_referencia_b64
     ruta_fondo = ruta_salida + ".fondo_tmp.png"
     intentos_maximos, espera = 3, 5
     fondo_ok = False
