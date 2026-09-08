@@ -3490,7 +3490,28 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
         return None
 
     try:
-        base = Image.open(ruta_fondo).convert("RGB").resize((ANCHO, ALTO))
+        base = Image.open(ruta_fondo).convert("RGB").resize((ANCHO, ALTO)).convert("RGBA")
+
+        # Degradado oscuro progresivo (no corte duro): empieza a oscurecer
+        # suave desde el 35% del ancho y llega a negro solido en el 55%,
+        # garantizando que la zona del texto (desde el 44%) quede siempre
+        # legible sin importar si la escena de la IA se pasa un poco.
+        X_INICIO_DEGRADADO = int(ANCHO * 0.35)
+        X_FIN_DEGRADADO = int(ANCHO * 0.55)
+        fila_gradiente = Image.new("L", (ANCHO, 1), 0)
+        pixeles_gradiente = fila_gradiente.load()
+        for x in range(ANCHO):
+            if x < X_INICIO_DEGRADADO:
+                alpha = 0
+            elif x >= X_FIN_DEGRADADO:
+                alpha = 255
+            else:
+                alpha = int(255 * (x - X_INICIO_DEGRADADO) / (X_FIN_DEGRADADO - X_INICIO_DEGRADADO))
+            pixeles_gradiente[x, 0] = alpha
+        mascara_degradado = fila_gradiente.resize((ANCHO, ALTO))
+        capa_negra = Image.new("RGBA", base.size, (0, 0, 0, 255))
+        base = Image.composite(capa_negra, base, mascara_degradado)
+
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
