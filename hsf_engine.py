@@ -3436,15 +3436,7 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
             "One person in emotional distress, close-up portrait, inside a home."
         )
 
-    ruta_plantilla_referencia = _obtener_plantilla_miniatura_desde_drive(logger=logger)
-    imagen_referencia_b64 = None
-    if ruta_plantilla_referencia and os.path.exists(ruta_plantilla_referencia):
-        try:
-            with open(ruta_plantilla_referencia, "rb") as f:
-                imagen_referencia_b64 = base64.b64encode(f.read()).decode("utf-8")
-        except Exception as e:
-            if logger:
-                logger.warning(f"No se pudo leer la plantilla de referencia: {e}")
+    URL_PLANTILLA_REFERENCIA = "https://raw.githubusercontent.com/evansxandera1-tech/hsf-engine/main/assets/miniatura_referencia.png"
 
     prompt = (
         "16:9 dark suspense comic book illustration, noir style, thick ink "
@@ -3465,9 +3457,8 @@ def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salid
     cuerpo = {
         "prompt": prompt, "model": "seedream-pro",
         "size": f"{ANCHO}x{ALTO}", "response_format": "b64_json",
+        "image": URL_PLANTILLA_REFERENCIA,
     }
-    if imagen_referencia_b64:
-        cuerpo["image"] = imagen_referencia_b64
     ruta_fondo = ruta_salida + ".fondo_tmp.png"
     intentos_maximos, espera = 3, 5
     fondo_ok = False
