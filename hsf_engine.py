@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "5.9"
+VERSION_SCRIPT = "6.1"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -2348,14 +2348,15 @@ def _pipeline_video_automatico(logger, ruta_log):
     _ULTIMO_RESULTADO_AUTOMATICO["carpeta_proyecto"] = os.path.dirname(ruta_video_absoluta)
 
 
-PROMPT_TITULO_YOUTUBE = """Convertí este título de un post de Reddit/foro en un título de YouTube atractivo para un video de historia narrada en español.
+PROMPT_TITULO_YOUTUBE = """Convertí este título de un post de Reddit/foro en un título de YouTube para una historia real, tipo confesión escandalosa: morbo DIRECTO y explícito, no una insinuación vaga.
 
 Reglas:
 - Máximo 90 caracteres (importante, no te pases).
-- Generá intriga o curiosidad genuina sobre la historia, sin inventar datos que no estén insinuados en el título original.
+- Si el título original menciona o insinúa una traición, infidelidad o vínculo prohibido, dejá explícito QUIÉN hizo QUÉ con QUIÉN (ej: "me acosté con la hija de mi mejor amiga", "mi esposo me engañaba con mi papá"), en vez de diluirlo en algo genérico tipo "un secreto familiar" o "lo que descubrí de mi hermano".
+- Concreto y crudo, no insinuación tipo "no vas a creer lo que pasó" o "esto cambió todo".
+- No inventes datos ni vínculos que no estén insinuados en el título original: si no da ese detalle, usá lo más explícito que sí da.
 - No uses mayúsculas sostenidas, no uses emojis, no uses signos de exclamación de más.
 - No copies el título original palabra por palabra: reformulalo como titular de YouTube.
-- Nada de clickbait falso ni exagerado que no se corresponda con la historia.
 
 Título original: "{titulo}"
 
@@ -2465,16 +2466,20 @@ def _generar_texto_miniatura(historia_completa, resumen_texto, titulo_youtube=""
         return _respaldo()
 
     prompt = (
-        "Lee esta historia real completa (en espanol) y elige el momento "
-        "o detalle mas intrigante/impactante para usar como texto de una "
-        "miniatura de YouTube. Escribe UNA sola frase en espanol, en "
-        "MAYUSCULAS, de entre 150 y 200 caracteres exactos de largo (ni "
-        "mas corta ni mas larga), tipo clickbait dramatico (puede ser una "
-        "pregunta o una afirmacion impactante). Esta frase NO debe repetir "
-        "ni parafrasear el titulo del video que se muestra abajo — tiene "
-        "que aportar un dato o giro DISTINTO y mas especifico de la "
-        "historia. No escribas nada mas que esa frase, sin comillas ni "
-        "explicaciones.\n\n"
+        "Lee esta historia real completa (en espanol) y elegi el detalle "
+        "mas escandaloso y explicito de toda la historia (quien hizo que "
+        "con quien: la traicion, el engaño o el vinculo prohibido concreto) "
+        "para usar como texto de una miniatura de YouTube. Escribe UNA sola "
+        "frase en espanol, en MAYUSCULAS, de entre 150 y 200 caracteres "
+        "exactos de largo (ni mas corta ni mas larga), directa y cruda, "
+        "tipo confesion de morbo real, NO una insinuacion vaga tipo 'un "
+        "secreto salio a la luz'. Nombra el hecho concreto (ejemplos de "
+        "tono, no copiar: 'ME ACOSTE CON LA HIJA DE MI MEJOR AMIGA', 'MI "
+        "ESPOSO ME ENGAÑABA CON MI PROPIO PADRE'). Esta frase NO debe "
+        "repetir ni parafrasear el titulo del video que se muestra abajo — "
+        "tiene que aportar un dato o giro DISTINTO y mas especifico de la "
+        "historia. No inventes nada que no este en la historia. No escribas "
+        "nada mas que esa frase, sin comillas ni explicaciones.\n\n"
         f"Titulo del video (no lo repitas): {titulo_youtube}\n\n"
         f"Historia completa:\n{texto_base}"
     )
@@ -3193,14 +3198,29 @@ def _armar_tags_youtube(titulo_resumen, resumen_texto=None, logger=None):
         ]
         tags = tags_fijos + palabras_titulo
 
-    # YouTube limita el total de tags a 500 caracteres sumados; se recorta
-    # por las dudas para no pasarse.
+    return _sanear_tags_youtube(tags)
+
+
+def _sanear_tags_youtube(tags, limite_seguro=460):
+    """Filtra y recorta tags para no chocar con el limite real de YouTube:
+    no son 500 caracteres planos, YouTube cuenta cada tag con espacios
+    como si fuera entre comillas (+2 caracteres). Con el recorte viejo
+    (480 sin ese +2) el total real se pasaba de 500 y la subida fallaba
+    con error 'invalidTags' (ver caso Te_imaginas_atrapar_a_tu_propio_hermano,
+    23 tags -> 508 caracteres reales, YouTube lo rechazo).
+    Ademas saca duplicados y caracteres invalidos (<, >, ")."""
+    vistos = set()
     tags_final, largo = [], 0
     for t in tags:
-        if largo + len(t) + 1 > 480:
+        t = t.strip().replace("<", "").replace(">", "").replace('"', "")
+        if not t or t.lower() in vistos:
+            continue
+        costo = len(t) + (2 if " " in t else 0) + 1  # +1 por la coma separadora
+        if largo + costo > limite_seguro:
             break
+        vistos.add(t.lower())
         tags_final.append(t)
-        largo += len(t) + 1
+        largo += costo
     return tags_final
 
 
