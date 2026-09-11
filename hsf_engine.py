@@ -2172,16 +2172,16 @@ def _marcar_texto_usado_en_drive(nombre_archivo, logger=None):
 
 def _obtener_plantilla_miniatura_desde_drive(logger=None):
     """Descarga (una sola vez, se cachea localmente) la plantilla fija de
-    miniatura desde gdrive:miniatura/miniatura_plantilla.png. Devuelve la
+    miniatura desde gdrive:miniatura/miniatura_plantilla1.png. Devuelve la
     ruta local, o None si no existe/falla la descarga (en ese caso el
     llamador cae al método viejo: frame del video)."""
     os.makedirs(CARPETA_MINIATURA_LOCAL, exist_ok=True)
-    ruta_local = os.path.join(CARPETA_MINIATURA_LOCAL, "miniatura_plantilla.png")
+    ruta_local = os.path.join(CARPETA_MINIATURA_LOCAL, "miniatura_plantilla1.png")
     if os.path.exists(ruta_local):
         return ruta_local
     try:
         resultado = subprocess.run(
-            ["rclone", "copyto", f"{RCLONE_REMOTE_MINIATURA}/miniatura_plantilla.png", ruta_local],
+            ["rclone", "copyto", f"{RCLONE_REMOTE_MINIATURA}/miniatura_plantilla1.png", ruta_local],
             capture_output=True, text=True, timeout=120,
         )
         if resultado.returncode != 0 or not os.path.exists(ruta_local):
@@ -2664,7 +2664,7 @@ def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
 def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None, historia_completa=None):
     """Miniatura fija: se dibuja el texto normal de la miniatura (la
     pregunta-dilema generada con Gemini) sobre la plantilla descargada de
-    Drive (gdrive:miniatura/miniatura_plantilla.png). Ya no genera nada
+    Drive (gdrive:miniatura/miniatura_plantilla1.png). Ya no genera nada
     con IA (Pollinations/seedream): siempre la misma plantilla, solo
     cambia el texto."""
     from PIL import Image, ImageDraw, ImageFont
@@ -3159,7 +3159,7 @@ def _subir_ultimo_resultado_a_youtube(logger):
         # " | Historia real" (ese sufijo es para la lista de videos, en la
         # miniatura ocupa espacio de más sin aportar nada).
         titulo_para_imagen = titulo.replace(" | Historia real", "")
-        # Plantilla fija en Drive (gdrive:miniatura/miniatura_plantilla.png):
+        # Plantilla fija en Drive (gdrive:miniatura/miniatura_plantilla1.png):
         # mismo diseño siempre, solo cambia el texto. Sin generación con IA.
         ok_miniatura = generar_miniatura_clickbait(
             titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
