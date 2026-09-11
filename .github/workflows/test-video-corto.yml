@@ -42,14 +42,13 @@ jobs:
           import logging
           import os
           import subprocess
-          import requests
           import hsf_engine
           from hsf_engine import (
               procesar_todo, _elegir_texto_desde_drive, _marcar_texto_usado_en_drive,
-              _elegir_gameplay_desde_drive,
+              _elegir_gameplay_desde_drive, _llamar_gemini,
               _subir_ultimo_resultado_a_youtube, ESTADO, CANDADO_ESTADO, CARPETA_VIDEOS,
               FUENTE_POR_DEFECTO, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
-              VELOCIDAD_EFECTO_POR_DEFECTO, GEMINI_API_KEY, GEMINI_MODELO,
+              VELOCIDAD_EFECTO_POR_DEFECTO, GEMINI_API_KEY,
           )
 
           logger = logging.getLogger("test_video_corto")
@@ -66,7 +65,15 @@ jobs:
           titulo_resumen = os.path.splitext(nombre_archivo_texto)[0].replace("_", " ").strip()
 
           # ---- Resumir la historia completa a ~2 minutos narrados (solo prueba) ----
+          # Usa _llamar_gemini (con reintentos/backoff ante 429/503/timeouts,
+          # la misma funcion que ya usa produccion) en vez de un requests.post
+          # suelto sin reintentos: eso era lo que fallaba intermitente.
+          # Si el resumen no se puede conseguir, se ABORTA (no se cae en
+          # silencio al guion completo): un "test de 2 min" que termina
+          # procesando la historia entera no sirve como prueba y obliga a
+          # cancelar el workflow a mano.
           guion_original = guion
+          resumen_ok = False
           if GEMINI_API_KEY:
               prompt_resumen = (
                   "Resumi la siguiente historia real narrada en primera persona, "
@@ -78,24 +85,25 @@ jobs:
                   "devolve SOLO el texto resumido de la historia.\n\n"
                   f"HISTORIA ORIGINAL:\n{guion_original.strip()[:6000]}"
               )
-              try:
-                  resp = requests.post(
-                      f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-                      params={"key": GEMINI_API_KEY},
-                      json={"contents": [{"parts": [{"text": prompt_resumen}]}]},
-                      timeout=60,
-                  )
-                  resp.raise_for_status()
-                  guion_resumido = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                  if guion_resumido:
-                      guion = guion_resumido
-                      print(f"Guion resumido: {len(guion_original.split())} palabras -> {len(guion.split())} palabras")
-                  else:
-                      print("Gemini no devolvio texto, se usa el guion original completo")
-              except Exception as e:
-                  print(f"Fallo al resumir con Gemini, se usa el guion original completo: {e}")
+              guion_resumido = _llamar_gemini(
+                  prompt_resumen, timeout=60, intentos_maximos=4,
+                  logger=logger, etiqueta="Resumen 2 min",
+              )
+              if guion_resumido:
+                  guion = guion_resumido
+                  resumen_ok = True
+                  print(f"Guion resumido: {len(guion_original.split())} palabras -> {len(guion.split())} palabras", flush=True)
+              else:
+                  print("Gemini no devolvio resumen tras varios reintentos.", flush=True)
           else:
-              print("GEMINI_API_KEY vacia, se usa el guion original completo (sin resumir)")
+              print("GEMINI_API_KEY vacia.", flush=True)
+
+          if not resumen_ok:
+              raise RuntimeError(
+                  "No se pudo resumir el guion a ~2 min (GEMINI_API_KEY vacia o "
+                  "Gemini fallo tras varios reintentos). Se aborta para no "
+                  "terminar procesando el texto completo en esta prueba corta."
+              )
 
           ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
           if not ruta_gameplay:
@@ -116,7 +124,7 @@ jobs:
               raise RuntimeError(f"El pipeline de video fallo: {resultado.get('mensaje', 'sin detalle')}")
 
           ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado["video"])
-          print("Video generado en:", ruta_video_absoluta)
+          print("Video generado en:", ruta_video_absoluta, flush=True)
 
           # ---- Respaldo: si aun asi quedo mas largo de 2 min, se recorta duro ----
           cmd_duracion = [
@@ -128,7 +136,7 @@ jobs:
               duracion_actual = float(subprocess.run(cmd_duracion, capture_output=True, text=True).stdout.strip())
           except Exception:
               pass
-          print(f"Duracion del video generado: {duracion_actual:.1f}s")
+          print(f"Duracion del video generado: {duracion_actual:.1f}s", flush=True)
 
           if duracion_actual > 125:
               ruta_video_recortado = ruta_video_absoluta + ".recortado.mp4"
@@ -142,11 +150,11 @@ jobs:
                   resultado_recorte = subprocess.run(cmd_recorte, capture_output=True, text=True)
               if resultado_recorte.returncode == 0 and os.path.exists(ruta_video_recortado):
                   os.replace(ruta_video_recortado, ruta_video_absoluta)
-                  print("El resumen se paso de largo, se aplico recorte duro a 2 minutos como respaldo.")
+                  print("El resumen se paso de largo, se aplico recorte duro a 2 minutos como respaldo.", flush=True)
               else:
-                  print(f"No se pudo aplicar el recorte de respaldo: {resultado_recorte.stderr[-500:]}")
+                  print(f"No se pudo aplicar el recorte de respaldo: {resultado_recorte.stderr[-500:]}", flush=True)
           else:
-              print("El video ya quedo dentro de los 2 minutos gracias al resumen, no hizo falta recortar.")
+              print("El video ya quedo dentro de los 2 minutos gracias al resumen, no hizo falta recortar.", flush=True)
 
           logger_subida = logging.getLogger("subida_youtube_test")
           logger_subida.addHandler(logging.StreamHandler())
