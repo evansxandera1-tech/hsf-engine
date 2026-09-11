@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "6.2"
+VERSION_SCRIPT = "6.3"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -2432,7 +2432,17 @@ def _llamar_gemini(prompt, timeout=30, intentos_maximos=4, logger=None, etiqueta
                 espera *= 2
                 continue
             resp.raise_for_status()
-            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+            datos = resp.json()
+            candidatos = datos.get("candidates")
+            if not candidatos:
+                motivo_bloqueo = (datos.get("promptFeedback") or {}).get("blockReason", "desconocido")
+                raise RuntimeError(f"Gemini bloqueo la respuesta (blockReason={motivo_bloqueo}, sin candidates)")
+            candidato = candidatos[0]
+            partes = (candidato.get("content") or {}).get("parts")
+            if not partes:
+                motivo_finish = candidato.get("finishReason", "desconocido")
+                raise RuntimeError(f"Gemini no devolvio texto (finishReason={motivo_finish}, sin content/parts; probable filtro de seguridad)")
+            return partes[0]["text"].strip().strip('"')
         except Exception as e:
             if intento >= intentos_maximos:
                 if logger:
