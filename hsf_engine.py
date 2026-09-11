@@ -2662,136 +2662,79 @@ def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
 
 
 def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None, historia_completa=None):
-    """Miniatura estilo 'split': mitad izquierda con una imagen realista
-    generada con IA (dos personas confrontándose, a partir del resumen de
-    la historia) y mitad derecha una tarjeta blanca con el logo HSF, el
-    nombre del canal y una pregunta-dilema (generada con Gemini a partir
-    del resumen, estilo '¿Hice mal en...?'), en negro y mayúscula. Borde
-    rojo grueso alrededor de todo. Si la imagen con IA falla, usa un
-    frame del gameplay como respaldo para el lado izquierdo."""
-    ancho_mitad = RESOLUCION_ANCHO // 2
-    prompt_imagen = _generar_prompt_imagen_miniatura(
-        historia_completa or resumen_texto, titulo_miniatura, logger=logger,
-    )
-    ruta_imagen_izq = generar_fondo_ia_pollinations(
-        resumen_texto, ruta_salida + ".izq.jpg", logger=logger,
-        ancho=ancho_mitad, alto=RESOLUCION_ALTO,
-        prompt_personalizado=prompt_imagen,
-    )
+    """Miniatura fija: se dibuja el texto normal de la miniatura (la
+    pregunta-dilema generada con Gemini) sobre la plantilla descargada de
+    Drive (gdrive:miniatura/miniatura_plantilla.png). Ya no genera nada
+    con IA (Pollinations/seedream): siempre la misma plantilla, solo
+    cambia el texto."""
+    from PIL import Image, ImageDraw, ImageFont
+    import textwrap
+
+    ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
+    if not ruta_plantilla or not os.path.exists(ruta_plantilla):
+        if logger:
+            logger.warning("No hay plantilla de miniatura disponible (Drive).")
+        return None
 
     pregunta = _generar_pregunta_miniatura(resumen_texto, logger=logger)
 
-    def envolver_por_ancho(texto, max_chars):
-        palabras = texto.split()
-        lineas, actual, largo = [], [], 0
-        for palabra in palabras:
-            if actual and largo + len(palabra) + 1 > max_chars:
-                lineas.append(" ".join(actual))
-                actual, largo = [], 0
-            actual.append(palabra)
-            largo += len(palabra) + 1
-        if actual:
-            lineas.append(" ".join(actual))
-        return lineas
+    img = Image.open(ruta_plantilla).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    ancho_img, alto_img = img.size
 
-    # Calibrado con DejaVu Sans Bold: a fontsize=40, ~27.4px/carácter;
-    # panel derecho tiene ~560px útiles de ancho (640 de mitad - 80 de
-    # margen), así que 20 caracteres por línea es lo que entra bien.
-    lineas = envolver_por_ancho(pregunta, 20)[:5]
+    # Zona de texto calibrada sobre el mockup (1364x768), escalada al
+    # tamaño real de la plantilla por si se reemplaza por otra de
+    # distinta resolución más adelante.
+    escala_x = ancho_img / 1364
+    escala_y = alto_img / 768
+    text_x0 = int(300 * escala_x)
+    text_x1 = int(1180 * escala_x)
+    text_y0 = int(300 * escala_y)
+    text_y1 = int(540 * escala_y)
+    max_w = text_x1 - text_x0
+    max_h = text_y1 - text_y0
 
     nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
     ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
     if not os.path.exists(ruta_fuente):
-        ruta_fuente = None
-    fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
+        ruta_fuente = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-    alto_linea = 58
-    x_centro_panel = ancho_mitad + ancho_mitad // 2
-    y_inicio = 180 + (420 - len(lineas) * alto_linea) // 2
+    font_size = int(70 * escala_y)
+    lines, line_heights = [], []
+    while font_size > 20:
+        font = ImageFont.truetype(ruta_fuente, font_size)
+        avg_char_w = font.getlength("x")
+        wrap_width = max(10, int(max_w / avg_char_w))
+        lines = textwrap.wrap(pregunta, width=wrap_width)
+        line_heights = []
+        total_h = 0
+        ok = True
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            if lw > max_w:
+                ok = False
+                break
+            line_heights.append(lh)
+            total_h += lh * 1.25
+        if ok and total_h <= max_h:
+            break
+        font_size -= 2
 
-    ruta_logo = os.path.join(CARPETA_BASE, "assets", "logo_hsf.png")
-    tiene_logo = os.path.exists(ruta_logo)
+    line_spacing = 1.25
+    total_h = sum(h * line_spacing for h in line_heights)
+    cur_y = text_y0 + (max_h - total_h) / 2
+    for line, lh in zip(lines, line_heights):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        lw = bbox[2] - bbox[0]
+        cx = text_x0 + (max_w - lw) / 2
+        draw.text((cx, cur_y), line, font=font, fill=(20, 20, 20))
+        cur_y += lh * line_spacing
 
-    grosor_borde = 10
-    filtros_borde = [
-        f"drawbox=x=0:y=0:w={RESOLUCION_ANCHO}:h={grosor_borde}:color=0xDC1414:t=fill",
-        f"drawbox=x=0:y={RESOLUCION_ALTO-grosor_borde}:w={RESOLUCION_ANCHO}:h={grosor_borde}:color=0xDC1414:t=fill",
-        f"drawbox=x=0:y=0:w={grosor_borde}:h={RESOLUCION_ALTO}:color=0xDC1414:t=fill",
-        f"drawbox=x={RESOLUCION_ANCHO-grosor_borde}:y=0:w={grosor_borde}:h={RESOLUCION_ALTO}:color=0xDC1414:t=fill",
-        f"drawbox=x={ancho_mitad-grosor_borde//2}:y=0:w={grosor_borde}:h={RESOLUCION_ALTO}:color=0xDC1414:t=fill",
-    ]
-
-    dibujo_texto_centrado = []
-    for i, linea in enumerate(lineas):
-        linea_escapada = linea.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        y_pos = y_inicio + i * alto_linea
-        # Centrado manual: se mide el texto con la misma heurística de
-        # ancho por carácter usada para el wrap (evita tener que centrar
-        # con text_w, que en ffmpeg se calcula respecto a todo el canvas).
-        ancho_estimado = int(len(linea_escapada) * 27.4)
-        x_pos = x_centro_panel - ancho_estimado // 2
-        dibujo_texto_centrado.append(
-            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize=40:x={x_pos}:y={y_pos}"
-        )
-
-    filtros_nombre = []
-    if tiene_logo:
-        filtros_nombre.append(
-            f"drawtext=text='Historias Sin Filtro'{fontfile}:fontcolor=black:fontsize=26:"
-            f"x={ancho_mitad + 132}:y=52"
-        )
-
-    filtro_vf = ",".join(filtros_borde + filtros_nombre + dibujo_texto_centrado)
-
-    if ruta_imagen_izq:
-        entrada_izq = ruta_imagen_izq
-    elif ruta_video_fondo and os.path.exists(ruta_video_fondo):
-        # Recorta un frame del gameplay como respaldo, ya escalado a la
-        # mitad del ancho.
-        entrada_izq = ruta_salida + ".izq_respaldo.jpg"
-        try:
-            duracion = obtener_duracion_audio(ruta_video_fondo)
-        except Exception:
-            duracion = 10.0
-        instante = min(max(2.0, duracion * 0.15), duracion - 1 if duracion > 1 else 0)
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(instante), "-i", ruta_video_fondo,
-             "-vf", f"scale={ancho_mitad}:{RESOLUCION_ALTO}", "-frames:v", "1", entrada_izq],
-            capture_output=True,
-        )
-        if not os.path.exists(entrada_izq):
-            entrada_izq = None
-    else:
-        entrada_izq = None
-
-    if not entrada_izq:
-        cmd_fondo_izq = ["ffmpeg", "-y", "-f", "lavfi",
-                          "-i", f"color=c=gray:s={ancho_mitad}x{RESOLUCION_ALTO}",
-                          "-frames:v", "1", ruta_salida + ".izq_gris.jpg"]
-        subprocess.run(cmd_fondo_izq, capture_output=True)
-        entrada_izq = ruta_salida + ".izq_gris.jpg"
-
-    # Lienzo blanco de fondo + imagen izquierda superpuesta + (logo) +
-    # bordes + texto, todo en una sola pasada de ffmpeg con filter_complex.
-    entradas = ["-f", "lavfi", "-i", f"color=c=white:s={RESOLUCION_ANCHO}x{RESOLUCION_ALTO}",
-                "-i", entrada_izq]
-    mapa_filtro = f"[1:v]scale={ancho_mitad}:{RESOLUCION_ALTO}[izq];[0:v][izq]overlay=0:0[base]"
-    entrada_actual = "[base]"
-    if tiene_logo:
-        entradas += ["-i", ruta_logo]
-        mapa_filtro += f";{entrada_actual}[2:v]overlay={ancho_mitad+60}:34[conlogo]"
-        entrada_actual = "[conlogo]"
-    mapa_filtro += f";{entrada_actual}{filtro_vf}[out]"
-
-    cmd = ["ffmpeg", "-y"] + entradas + ["-filter_complex", mapa_filtro, "-map", "[out]", "-frames:v", "1", ruta_salida]
-
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
-    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
-        if logger:
-            logger.warning(f"No se pudo generar la miniatura split: {resultado.stderr[-500:]}")
-        return None
+    img = img.resize((RESOLUCION_ANCHO, RESOLUCION_ALTO), Image.LANCZOS)
+    img.save(ruta_salida, quality=95)
     if logger:
-        logger.info(f"Miniatura split generada: {ruta_salida}")
+        logger.info(f"Miniatura (plantilla fija) generada: {ruta_salida}")
     return ruta_salida
 
 
@@ -3216,31 +3159,16 @@ def _subir_ultimo_resultado_a_youtube(logger):
         # " | Historia real" (ese sufijo es para la lista de videos, en la
         # miniatura ocupa espacio de más sin aportar nada).
         titulo_para_imagen = titulo.replace(" | Historia real", "")
-        # Si hay una plantilla fija en Drive (gdrive:miniatura/miniatura_
-        # plantilla.png), se usa esa en vez de sacar un frame del video:
-        # mismo diseño siempre, solo cambia el título.
-        ok_miniatura = generar_miniatura_nanobanana_pro(
+        # Plantilla fija en Drive (gdrive:miniatura/miniatura_plantilla.png):
+        # mismo diseño siempre, solo cambia el texto. Sin generación con IA.
+        ok_miniatura = generar_miniatura_clickbait(
             titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
             historia_completa=resultado.get("guion"),
         )
-        ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
         if not ok_miniatura:
-            ok_miniatura = generar_miniatura_nueva(
-                titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
-                ruta_video_fondo=resultado["ruta_video"],
-            )
-        if not ok_miniatura:
-            ok_miniatura = generar_miniatura_clickbait(
-                titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
-                ruta_video_fondo=resultado["ruta_video"],
-                historia_completa=resultado.get("guion"),
-            )
-        if not ok_miniatura and ruta_plantilla:
-            ok_miniatura = generar_miniatura_plantilla(
-                titulo_para_imagen, ruta_plantilla, ruta_miniatura, logger=logger,
-                ruta_video_fondo=resultado["ruta_video"],
-            )
-        if not ok_miniatura:
+            # Último respaldo, solo por si la plantilla de Drive no se
+            # pudo descargar: un frame del video, para que el video no
+            # quede sin miniatura.
             ok_miniatura = generar_miniatura(resultado["ruta_video"], titulo_para_imagen, ruta_miniatura, logger=logger)
         if ok_miniatura:
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(ruta_miniatura, mimetype="image/jpeg")).execute()
