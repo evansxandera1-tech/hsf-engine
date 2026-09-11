@@ -1,4 +1,3 @@
-import base64
 """
 HSF Engine — núcleo del generador de video (repo hsf-engine).
 
@@ -36,6 +35,7 @@ CARPETA_MUSICA = os.path.join(CARPETA_BASE, "musica_hsf")
 CARPETA_FUENTES = os.path.join(CARPETA_BASE, "fuentes_hsf")
 CARPETA_LOGS = os.path.join(CARPETA_BASE, "logs_hsf")
 CARPETA_PREVIEWS_VOZ = os.path.join(CARPETA_BASE, "previews_voz_hsf")
+CARPETA_PRUEBAS_AUDIO_REDDIT = os.path.join(CARPETA_BASE, "pruebas_audio_reddit")
 
 # ---- Fuentes reales de contenido (v5.4): texto ya parafraseado (repo
 # "traduce") y gameplay propio (gameplay_slither), ambos sincronizados
@@ -46,19 +46,15 @@ CARPETA_PREVIEWS_VOZ = os.path.join(CARPETA_BASE, "previews_voz_hsf")
 # no las usa.
 CARPETA_TEXTOS_LISTOS = os.path.join(CARPETA_BASE, "textos_listos_gdrive")
 CARPETA_GAMEPLAY_LOCAL = os.path.join(CARPETA_BASE, "gameplay_local_gdrive")
-CARPETA_MINIATURA_LOCAL = os.path.join(CARPETA_BASE, "miniatura_local_gdrive")
 RCLONE_REMOTE_TXT_LIMPIO = "gdrive:txt-limpio"
 RCLONE_REMOTE_TXT_LIMPIO_USADOS = f"{RCLONE_REMOTE_TXT_LIMPIO}/usados"
 RCLONE_REMOTE_GAMEPLAY = "gdrive:gameplay_slither"
-RCLONE_REMOTE_MINIATURA = "gdrive:miniatura"
-CARPETA_INTRO_LOCAL = os.path.join(CARPETA_BASE, "intro_local_gdrive")
-RCLONE_REMOTE_INTRO = "gdrive:intro"
 
 for _c in [CARPETA_TEXTOS_LISTOS, CARPETA_GAMEPLAY_LOCAL]:
     os.makedirs(_c, exist_ok=True)
 
 for c in [CARPETA_SALIDA, CARPETA_VIDEOS, CARPETA_IMAGENES_SUBIDAS, CARPETA_IMAGENES_STOCK,
-          CARPETA_MUSICA, CARPETA_FUENTES, CARPETA_LOGS, CARPETA_PREVIEWS_VOZ]:
+          CARPETA_MUSICA, CARPETA_FUENTES, CARPETA_LOGS, CARPETA_PREVIEWS_VOZ, CARPETA_PRUEBAS_AUDIO_REDDIT]:
     os.makedirs(c, exist_ok=True)
 
 # Todo lo que se copia al celular (audio, video, logs) va dentro de esta
@@ -412,7 +408,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "6.3"
+VERSION_SCRIPT = "5.4"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -605,9 +601,6 @@ FUENTES_DISPONIBLES = {
     "Cormorant Garamond": "https://github.com/google/fonts/raw/main/ofl/cormorantgaramond/CormorantGaramond-Bold.ttf",
     "EB Garamond": "https://github.com/google/fonts/raw/main/ofl/ebgaramond/static/EBGaramond-Bold.ttf",
     "Lora": "https://github.com/google/fonts/raw/main/ofl/lora/static/Lora-Bold.ttf",
-    # Fuente redondeada tipo "burbuja", usada solo para el titular de la
-    # miniatura (más visual/infantil que las serias de arriba).
-    "Chewy": "https://github.com/google/fonts/raw/main/ofl/chewy/Chewy-Regular.ttf",
 }
 # Montserrat SemiBold como nueva fuente por defecto: para historias de Reddit
 # en horizontal (1920x1080) se lee mejor una tipografía limpia tipo sans-serif
@@ -707,6 +700,7 @@ VOZ_NARRADOR = "es-PE-AlexNeural"
 # Voz para el audio en inglés adaptado (v3.4). Pitch y velocidad quedan
 # fijos (no editables desde la interfaz por ahora, a diferencia de la voz
 # en español que sí tiene sliders).
+VOZ_NARRADOR_INGLES = "en-GB-RyanNeural"
 TONO_NARRADOR_INGLES = "+0Hz"
 VELOCIDAD_NARRADOR_INGLES = "-10%"
 
@@ -1268,6 +1262,10 @@ import itertools
 # rompe el resto del programa) hasta que lo descargues y lo coloques ahí.
 RUTA_DATASET_AITA = os.path.join(CARPETA_BASE, "dataset_aita.csv")
 
+SUBREDDITS_RELATOS = [
+    "AITAH", "relationship_advice", "confessions", "TrueOffMyChest",
+    "maliciouscompliance",
+]
 
 # Filtros de selección: se descartan historias fuera de este rango de
 # palabras, con pocos upvotes, o marcadas como NSFW/borradas.
@@ -1296,19 +1294,160 @@ UPVOTES_MINIMOS_HISTORIA = 0
 # corto o largo, ajustar estos dos números.
 PALABRAS_OBJETIVO_MIN, PALABRAS_OBJETIVO_MAX = 4400, 5400
 
+RUTA_HISTORIAS_USADAS = os.path.join(CARPETA_BASE, "reddit_historias_usadas.json")
 
 
 
+def _cargar_ids_usados():
+    if not os.path.exists(RUTA_HISTORIAS_USADAS):
+        return set()
+    try:
+        with open(RUTA_HISTORIAS_USADAS, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
 
 
+def _guardar_id_usado(id_post):
+    usados = _cargar_ids_usados()
+    usados.add(id_post)
+    try:
+        with open(RUTA_HISTORIAS_USADAS, "w", encoding="utf-8") as f:
+            json.dump(sorted(usados), f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
+def _normalizar_y_filtrar(id_post, subreddit, titulo, cuerpo, upvotes, over_18, url, ids_usados):
+    """Aplica los filtros de selección a los datos ya extraídos de un post,
+    vengan del JSON o del RSS. Punto único de filtrado para los dos métodos."""
+    if not id_post or id_post in ids_usados:
+        return None
+    if over_18:
+        return None
+    titulo = (titulo or "").strip()
+    cuerpo = (cuerpo or "").strip()
+    if not cuerpo or cuerpo in ("[removed]", "[deleted]"):
+        return None
+    n_palabras = len(cuerpo.split())
+    if n_palabras < PALABRAS_MIN_HISTORIA or n_palabras > PALABRAS_MAX_HISTORIA:
+        return None
+    if upvotes < UPVOTES_MINIMOS_HISTORIA:
+        return None
+    return {
+        "id": id_post,
+        "subreddit": subreddit,
+        "titulo": titulo,
+        "cuerpo": cuerpo,
+        "upvotes": upvotes,
+        "url": url,
+    }
 
 
+def _candidatos_por_dataset(sub, ids_usados, logger=None):
+    """Vía de respaldo (v2.5): dataset local descargado de antemano, solo
+    para r/AITAH por ahora. No depende de la red ni de que Reddit esté
+    bloqueando o no: si el archivo RUTA_DATASET_AITA existe, siempre puede
+    aportar candidatos. Acepta encabezados típicos de los datasets públicos
+    de AITA (id/title/text o body/selftext, score u ups opcional)."""
+    candidatos = []
+    if sub.lower() != "aitah" or not os.path.exists(RUTA_DATASET_AITA):
+        return candidatos
+    try:
+        with open(RUTA_DATASET_AITA, "r", encoding="utf-8", newline="") as f:
+            lector = csv.DictReader(f)
+            for fila in lector:
+                id_post = fila.get("id") or fila.get("post_id") or ""
+                titulo = fila.get("title") or fila.get("titulo") or ""
+                cuerpo = fila.get("text") or fila.get("body") or fila.get("selftext") or ""
+                try:
+                    upvotes = int(float(fila.get("score") or fila.get("ups") or 0))
+                except (TypeError, ValueError):
+                    upvotes = 0
+                candidato = _normalizar_y_filtrar(
+                    id_post, "AITAH", titulo, cuerpo, upvotes, False,
+                    f"https://reddit.com/r/AITAH/comments/{id_post}", ids_usados,
+                )
+                if candidato:
+                    candidatos.append(candidato)
+    except Exception as e:
+        if logger:
+            logger.warning(f"No se pudo leer el dataset local de AITA: {e}")
+    return candidatos
 
 
+def _agrupar_para_objetivo(candidatos):
+    """A partir de todos los candidatos disponibles (ya filtrados y sin
+    usar), arma el grupo de historias para un solo video, apuntando a
+    PALABRAS_OBJETIVO_MIN/MAX en total:
+
+    1. Si hay alguna historia individual que ya cae en ese rango sola, se
+       usa esa (la de más upvotes entre las que cumplen).
+    2. Si no, se prueban combinaciones de 2 y de 3 historias entre las 15
+       más votadas, buscando alguna cuya suma de palabras entre en rango;
+       se prefiere la de más upvotes sumados y, a igualdad, la que use
+       menos historias.
+    3. Si ninguna combinación entra en rango, se devuelve igual la historia
+       individual más votada (el video sale más corto que el objetivo,
+       pero no se queda sin nada).
+
+    Devuelve una lista de 1 a 3 diccionarios de historia."""
+    if not candidatos:
+        return []
+
+    en_rango = [c for c in candidatos if PALABRAS_OBJETIVO_MIN <= len(c["cuerpo"].split()) <= PALABRAS_OBJETIVO_MAX]
+    if en_rango:
+        en_rango.sort(key=lambda c: c["upvotes"], reverse=True)
+        return [en_rango[0]]
+
+    top_candidatos = sorted(candidatos, key=lambda c: c["upvotes"], reverse=True)[:15]
+    mejor_clave, mejor_combo = None, None
+    for tam in (2, 3):
+        for combo in itertools.combinations(top_candidatos, tam):
+            total_palabras = sum(len(c["cuerpo"].split()) for c in combo)
+            if PALABRAS_OBJETIVO_MIN <= total_palabras <= PALABRAS_OBJETIVO_MAX:
+                total_upvotes = sum(c["upvotes"] for c in combo)
+                clave = (-total_upvotes, tam)
+                if mejor_clave is None or clave < mejor_clave:
+                    mejor_clave, mejor_combo = clave, combo
+    if mejor_combo:
+        return list(mejor_combo)
+
+    candidatos_ordenados = sorted(candidatos, key=lambda c: c["upvotes"], reverse=True)
+    return [candidatos_ordenados[0]]
 
 
+def obtener_historia_reddit(subreddits=None, logger=None):
+    """Trae candidatos del dataset local de AITA (RUTA_DATASET_AITA) y arma
+    el grupo de 1 a 3 historias para un solo video, apuntando a 28-30
+    minutos de narración (ver _agrupar_para_objetivo).
+
+    v5.3: se sacó el scraping en vivo de Reddit (login/JSON/RSS) y de
+    Mumsnet — Reddit bloqueaba el tráfico anónimo y Mumsnet dejó de traer
+    historias. La única fuente que queda es el dataset local; si
+    RUTA_DATASET_AITA no existe o está vacío, esta función no tiene de
+    dónde traer nada y devuelve None (revisar que dataset_aita.csv esté
+    subido al dataset de Hugging Face que descarga el workflow).
+
+    Devuelve una LISTA de 1 a 3 diccionarios con
+    id/subreddit/titulo/cuerpo/upvotes/url, o None si no se encontró
+    ningún candidato."""
+    subreddits = subreddits or SUBREDDITS_RELATOS
+    ids_usados = _cargar_ids_usados()
+    candidatos = []
+
+    for sub in subreddits:
+        candidatos.extend(_candidatos_por_dataset(sub, ids_usados, logger=logger))
+
+    if not candidatos:
+        if logger:
+            logger.warning(
+                "Sin candidatos: el dataset local de AITA no existe o está vacío "
+                f"({RUTA_DATASET_AITA}). Es la única fuente de historias disponible."
+            )
+        return None
+
+    return _agrupar_para_objetivo(candidatos)
 
 
 # ===================== Guion con Gemini (traducción + transformación) =====================
@@ -1319,19 +1458,238 @@ GEMINI_MODELO = "gemini-3.5-flash-lite"
 
 # Tono/personalidad del narrador. Placeholder por ahora: ajustar cuando se
 # defina el tono final (serio, canchero, sarcástico, neutro-cercano...).
+TONO_NARRADOR_REDDIT = "cercano y natural, como si le contara la historia a un amigo"
 
+PROMPT_GUION_REDDIT = """Traducí y adaptá al español la siguiente historia (puede venir de Reddit o de un foro británico como Mumsnet/AIBU; no la traduzcas palabra por palabra: adaptá modismos y tono para que suene natural, como si un narrador la contara en voz alta).
 
+Reglas de términos y jerga del foro de origen (aplicá solo las que correspondan según lo que aparezca en el texto):
+- Veredicto: "AITA"/"AIBU" → convertilo en la pregunta narrativa "¿Estoy siendo injusta/o?". "YTA"/"YABU" → "sí, estás siendo injusta/o". "NTA"/"YANBU" → "no estás siendo injusta/o". Nunca los traduzcas palabra por palabra ni los dejes en inglés.
+- Otra jerga de veredicto/foro si aparece: WWYD → "¿qué harían ustedes?"; LTB → "déjalo"/"termina la relación"; STBXH/STBXW → "mi futuro exesposo/a"; IMHO → "en mi humilde opinión" (o se omite si suena forzado); HTH, RTFT y jerga interna similar → se omiten, no aportan a la narración.
+- Acrónimos de parentesco: expandilos siempre (DH → mi esposo, DD → mi hija, DS → mi hijo, DP → mi pareja, DC → mi hijo/a, PIL → mis suegros, MIL → mi suegra, FIL → mi suegro).
+- Nombres de usuario del foro (si aparecen citados, ej. "Fulanito dice..."): no los traduzcas ni los leas literal si suenan raros en voz alta; reemplazalos por una referencia neutra ("otra persona respondió...", "alguien más comentó...").
+- Referencias culturales locales (NHS, marcas, lugares, programas de TV): mantenelas tal cual y agregá una aclaración breve entre paréntesis SOLO si el sentido no es obvio sin ella.
+- Conservá el sarcasmo, la ironía o el tono pasivo-agresivo del original si lo tiene; no lo suavices. Si hay humor seco (típico de foros británicos), buscale un equivalente natural en español, no traducción literal que pierda la gracia.
+
+Después:
+1. Mantené prácticamente todo el relato: no la resumas de más, achicá solo partes claramente repetitivas si las hay. El largo de esta historia ya se eligió a propósito para la duración del video, así que un guion mucho más corto que el original es un problema.
+2. Agregá 2 o 3 comentarios o reacciones breves del narrador insertados durante el relato (por ejemplo "acá se puso interesante", "yo no hubiera aguantado eso").
+3. Empezá con un gancho corto de 1-2 frases explicando por qué se eligió esta historia.
+4. Cerrá con una reflexión o pregunta corta para el espectador.
+5. Puntuá y acentuá el texto con cuidado (comas, puntos, puntos suspensivos, signos de exclamación e interrogación, tildes). La voz sintética que va a leer esto en voz alta solo usa la puntuación para decidir pausas y entonación: si el texto queda sin acentos o con puntuación pobre, se lee plano y sin emoción. Usá los signos donde correspondan para marcar sorpresa, tensión, humor o alivio según el momento del relato.
+
+Tono del narrador: {tono}
+
+Historia original (título: "{titulo}"):
+{cuerpo}
+
+Devolvé SOLO el texto final del guion, sin explicaciones ni comillas alrededor. No uses asteriscos, markdown ni emojis."""
+
+PROMPT_GUION_REDDIT_MULTIPLE = """Vas a armar un guion narrado en español para un video que junta varias historias reales (de Reddit y/o de un foro británico como Mumsnet/AIBU), una atrás de la otra, para llegar a unos 28-30 minutos de narración en total.
+
+Reglas de términos y jerga del foro de origen (aplicá solo las que correspondan según lo que aparezca en cada historia):
+- Veredicto: "AITA"/"AIBU" → convertilo en la pregunta narrativa "¿Estoy siendo injusta/o?". "YTA"/"YABU" → "sí, estás siendo injusta/o". "NTA"/"YANBU" → "no estás siendo injusta/o". Nunca los traduzcas palabra por palabra ni los dejes en inglés.
+- Otra jerga de veredicto/foro si aparece: WWYD → "¿qué harían ustedes?"; LTB → "déjalo"/"termina la relación"; STBXH/STBXW → "mi futuro exesposo/a"; IMHO → "en mi humilde opinión" (o se omite si suena forzado); HTH, RTFT y jerga interna similar → se omiten, no aportan a la narración.
+- Acrónimos de parentesco: expandilos siempre (DH → mi esposo, DD → mi hija, DS → mi hijo, DP → mi pareja, DC → mi hijo/a, PIL → mis suegros, MIL → mi suegra, FIL → mi suegro).
+- Nombres de usuario del foro (si aparecen citados): no los traduzcas ni los leas literal si suenan raros en voz alta; reemplazalos por una referencia neutra ("otra persona respondió...", "alguien más comentó...").
+- Referencias culturales locales (NHS, marcas, lugares, programas de TV): mantenelas tal cual y agregá una aclaración breve entre paréntesis SOLO si el sentido no es obvio sin ella.
+- Conservá el sarcasmo, la ironía o el tono pasivo-agresivo del original si lo tiene; no lo suavices. Si hay humor seco (típico de foros británicos), buscale un equivalente natural en español, no traducción literal que pierda la gracia.
+
+Para cada una de las historias numeradas abajo:
+1. Traducila y adaptala al español (no palabra por palabra: adaptá modismos y tono para que suene natural).
+2. Mantené prácticamente todo el relato: no la resumas de más, achicá solo partes claramente repetitivas si las hay. El largo de cada historia ya se eligió a propósito para llegar a los 28-30 minutos entre todas, así que un guion mucho más corto que el conjunto original es un problema.
+3. Agregá 2 o 3 comentarios o reacciones breves del narrador insertados durante el relato.
+
+Reglas para el guion completo:
+- Empezá con un gancho corto (2-3 frases) que presente que hoy van varias historias, sin arruinar los finales.
+- Entre historia e historia, agregá una transición corta y natural del narrador (por ejemplo "bueno, pasemos a la siguiente..."), variando la frase cada vez para que no se repita.
+- Cerrá todo el guion con una sola reflexión o pregunta corta para el espectador, que abarque el conjunto.
+- Puntuá y acentuá con mucho cuidado (comas, puntos, puntos suspensivos, exclamaciones, interrogaciones, tildes): la voz sintética que lee esto en voz alta solo usa la puntuación para decidir pausas y entonación.
+
+Tono del narrador: {tono}
+
+Historias:
+{historias}
+
+Devolvé SOLO el texto final del guion completo y unificado, sin explicaciones, sin numerar ni titular cada historia, sin comillas alrededor. No uses asteriscos, markdown ni emojis."""
 
 # ----- Guion en inglés adaptado (v3.4) -----
 # No traduce (el original ya está en inglés): adapta y transforma para que
 # cuente como contenido editado/comentado y no una simple lectura del post
 # original, con el mismo criterio de monetización que ya se aplicaba al
 # guion en español.
+PROMPT_GUION_INGLES = """Adapt the following real story (from Reddit or a British forum like Mumsnet/AIBU) into a narrated script. Do NOT just copy the original text: rework the phrasing, add narrator commentary, and restructure it into a proper spoken narration — this needs to read as transformed, commented content, not a verbatim reading of the original post (important for monetisation).
+
+Rules for forum jargon (apply only what's relevant):
+- Keep verdict jargon (AITA/AIBU, YTA/YABU, NTA/YANBU) but phrase it naturally as part of the narration, not as raw acronyms.
+- Expand kinship acronyms (DH -> my husband, DD -> my daughter, DS -> my son, DP -> my partner, DC -> my child, PIL -> my in-laws, MIL -> my mother-in-law, FIL -> my father-in-law).
+- If forum usernames are quoted, don't read them literally if they sound odd out loud; replace with a neutral reference ("someone else replied...", "another commenter said...").
+
+Then:
+1. Keep almost all of the story: don't over-summarise, only trim clearly repetitive parts. The length was chosen on purpose for the video's target duration.
+2. Add 2-3 brief narrator reactions/comments woven into the story (e.g. "now that's when it got interesting", "I wouldn't have put up with that").
+3. Start with a short 1-2 sentence hook explaining why this story was picked.
+4. Close with a short reflection or question for the viewer.
+5. Punctuate carefully (commas, full stops, ellipses, exclamation and question marks) since the synthetic voice reading this only uses punctuation to decide pauses and tone.
+
+Narrator tone: {tono}
+
+Original story (title: "{titulo}"):
+{cuerpo}
+
+Return ONLY the final script text, no explanations or quotes around it. No asterisks, markdown or emojis."""
+
+PROMPT_GUION_INGLES_MULTIPLE = """You're building one narrated script in English that joins several real stories (from Reddit and/or a British forum like Mumsnet/AIBU) back to back, aiming for about 28-30 minutes of narration total. Do NOT just copy the original texts: rework the phrasing, add narrator commentary, and restructure — this needs to read as transformed, commented content, not a verbatim reading (important for monetisation).
+
+Rules for forum jargon (apply only what's relevant per story):
+- Keep verdict jargon (AITA/AIBU, YTA/YABU, NTA/YANBU) but phrase it naturally as part of the narration.
+- Expand kinship acronyms (DH -> my husband, DD -> my daughter, DS -> my son, DP -> my partner, DC -> my child, PIL -> my in-laws, MIL -> my mother-in-law, FIL -> my father-in-law).
+- If forum usernames are quoted, replace with a neutral reference instead of reading them literally.
+
+For each numbered story below:
+1. Rework it into narration (don't just copy the original wording).
+2. Keep almost all of the story: don't over-summarise, only trim clearly repetitive parts.
+3. Add 2-3 brief narrator reactions/comments woven into the story.
+
+Rules for the whole script:
+- Start with a short hook (2-3 sentences) letting viewers know several stories are coming, without spoiling the endings.
+- Between stories, add a short natural narrator transition (e.g. "alright, moving on to the next one..."), varying the phrase each time.
+- Close the whole script with a single reflection or question for the viewer covering all the stories.
+- Punctuate carefully: the synthetic voice reading this only uses punctuation to decide pauses and tone.
+
+Narrator tone: {tono}
+
+Stories:
+{historias}
+
+Return ONLY the final unified script text, no explanations, no numbering or titling each story, no quotes around it. No asterisks, markdown or emojis."""
 
 
+def generar_guion_ingles(grupo, tono=TONO_NARRADOR_REDDIT, logger=None):
+    """Igual que generar_guion_reddit pero en inglés y SIN traducir (el
+    original ya está en inglés): adapta/transforma el texto para que
+    cuente como contenido editado y no una copia del post original."""
+    if not GEMINI_API_KEY:
+        if logger:
+            logger.warning("GEMINI_API_KEY vacía: se usa la historia en inglés sin adaptar.")
+        return "\n\n".join(h["cuerpo"] for h in grupo)
+
+    if len(grupo) == 1:
+        prompt = PROMPT_GUION_INGLES.format(tono=tono, titulo=grupo[0]["titulo"], cuerpo=grupo[0]["cuerpo"])
+    else:
+        bloques_historias = "\n\n".join(
+            f'Story {i + 1} (title: "{h["titulo"]}"):\n{h["cuerpo"]}' for i, h in enumerate(grupo)
+        )
+        prompt = PROMPT_GUION_INGLES_MULTIPLE.format(tono=tono, historias=bloques_historias)
+
+    intentos_maximos = 4
+    espera = 5
+    for intento in range(1, intentos_maximos + 1):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+                params={"key": GEMINI_API_KEY},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=90,
+            )
+            if resp.status_code == 429:
+                espera_real = espera
+                try:
+                    espera_real = max(espera, int(float(resp.headers.get("Retry-After", espera))))
+                except (TypeError, ValueError):
+                    pass
+                if logger:
+                    logger.warning(
+                        f"Gemini devolvió 429 (guion inglés). Intento {intento}/{intentos_maximos}, "
+                        f"reintentando en {espera_real}s..."
+                    )
+                if intento < intentos_maximos:
+                    time.sleep(espera_real)
+                    espera *= 2
+                    continue
+                resp.raise_for_status()
+            resp.raise_for_status()
+            datos = resp.json()
+            return datos["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            if intento >= intentos_maximos:
+                if logger:
+                    logger.warning(f"Fallo la generación del guion en inglés tras {intentos_maximos} intentos, se usa el texto original: {e}")
+                return "\n\n".join(h["cuerpo"] for h in grupo)
+            if logger:
+                logger.warning(f"Fallo al llamar a Gemini para guion inglés (intento {intento}/{intentos_maximos}): {e}")
+            time.sleep(espera)
+            espera *= 2
+    return "\n\n".join(h["cuerpo"] for h in grupo)
 
 
+def generar_guion_reddit(grupo, tono=TONO_NARRADOR_REDDIT, logger=None):
+    """Arma el guion final (traducido + adaptado + con comentarios del
+    narrador) a partir de un grupo de 1 a 3 historias crudas de Reddit
+    (ver obtener_historia_reddit), usando una sola llamada a la API de
+    Gemini. Si son varias historias, las une en un solo guion con
+    transiciones entre ellas. Si falla o no hay API key configurada,
+    devuelve el texto original sin transformar (con aviso en el log) para
+    que el resto del pipeline no se caiga."""
+    if not GEMINI_API_KEY:
+        if logger:
+            logger.warning("GEMINI_API_KEY vacía: se usa la historia sin traducir/transformar.")
+        return "\n\n".join(h["cuerpo"] for h in grupo)
 
+    if len(grupo) == 1:
+        prompt = PROMPT_GUION_REDDIT.format(tono=tono, titulo=grupo[0]["titulo"], cuerpo=grupo[0]["cuerpo"])
+    else:
+        bloques_historias = "\n\n".join(
+            f'Historia {i + 1} (título: "{h["titulo"]}"):\n{h["cuerpo"]}' for i, h in enumerate(grupo)
+        )
+        prompt = PROMPT_GUION_REDDIT_MULTIPLE.format(tono=tono, historias=bloques_historias)
+
+    # Gemini free tier devuelve 429 (Too Many Requests) cuando se supera el
+    # límite de pedidos por minuto — algo fácil de pisar en pruebas
+    # seguidas como las que se venían haciendo. Antes, un solo 429 hacía
+    # caer directo al texto sin traducir. Ahora se reintenta unas pocas
+    # veces con espera creciente (y respetando el header Retry-After si
+    # Gemini lo manda) antes de rendirse.
+    intentos_maximos = 4
+    espera = 5
+    for intento in range(1, intentos_maximos + 1):
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+                params={"key": GEMINI_API_KEY},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=90,
+            )
+            if resp.status_code == 429:
+                espera_real = espera
+                try:
+                    espera_real = max(espera, int(float(resp.headers.get("Retry-After", espera))))
+                except (TypeError, ValueError):
+                    pass
+                if logger:
+                    logger.warning(
+                        f"Gemini devolvió 429 (límite de pedidos). Intento {intento}/{intentos_maximos}, "
+                        f"reintentando en {espera_real}s..."
+                    )
+                if intento < intentos_maximos:
+                    time.sleep(espera_real)
+                    espera *= 2
+                    continue
+                resp.raise_for_status()
+            resp.raise_for_status()
+            datos = resp.json()
+            return datos["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            if intento >= intentos_maximos:
+                if logger:
+                    logger.warning(f"Fallo la generación del guion con Gemini tras {intentos_maximos} intentos, se usa el texto original: {e}")
+                return "\n\n".join(h["cuerpo"] for h in grupo)
+            # Fallo que no sea 429 (ej. de red): igual se reintenta, con la
+            # misma espera creciente, por si fue algo pasajero.
+            if logger:
+                logger.warning(f"Fallo al llamar a Gemini (intento {intento}/{intentos_maximos}): {e}")
+            time.sleep(espera)
+            espera *= 2
+    return "\n\n".join(h["cuerpo"] for h in grupo)
 
 # ============================================================
 # ---- módulo original: subtitulos.py ----
@@ -2173,31 +2531,6 @@ def _marcar_texto_usado_en_drive(nombre_archivo, logger=None):
             pass
 
 
-def _obtener_plantilla_miniatura_desde_drive(logger=None):
-    """Descarga (una sola vez, se cachea localmente) la plantilla fija de
-    miniatura desde gdrive:miniatura/miniatura_plantilla1.png. Devuelve la
-    ruta local, o None si no existe/falla la descarga (en ese caso el
-    llamador cae al método viejo: frame del video)."""
-    os.makedirs(CARPETA_MINIATURA_LOCAL, exist_ok=True)
-    ruta_local = os.path.join(CARPETA_MINIATURA_LOCAL, "miniatura_plantilla1.png")
-    if os.path.exists(ruta_local):
-        return ruta_local
-    try:
-        resultado = subprocess.run(
-            ["rclone", "copyto", f"{RCLONE_REMOTE_MINIATURA}/miniatura_plantilla1.png", ruta_local],
-            capture_output=True, text=True, timeout=120,
-        )
-        if resultado.returncode != 0 or not os.path.exists(ruta_local):
-            if logger:
-                logger.warning(f"No se pudo bajar la plantilla de miniatura desde Drive: {resultado.stderr[:300]}")
-            return None
-    except Exception as e:
-        if logger:
-            logger.warning(f"Error bajando plantilla de miniatura: {e}")
-        return None
-    return ruta_local
-
-
 def _elegir_gameplay_desde_drive(logger=None):
     """Lista los videos disponibles en gdrive:gameplay_slither (sin
     descargar todo el catálogo) y descarga solo UNO, elegido al azar, a la
@@ -2335,7 +2668,6 @@ def _pipeline_video_automatico(logger, ruta_log):
     _ULTIMO_RESULTADO_AUTOMATICO = {
         "ruta_video": ruta_video_absoluta,
         "titulo_resumen": titulo_resumen,
-        "guion": guion,
         "subreddits": [],
         "cantidad_historias": 1,
     }
@@ -2348,174 +2680,18 @@ def _pipeline_video_automatico(logger, ruta_log):
     _ULTIMO_RESULTADO_AUTOMATICO["carpeta_proyecto"] = os.path.dirname(ruta_video_absoluta)
 
 
-PROMPT_TITULO_YOUTUBE = """Convertí este título de un post de Reddit/foro en un título de YouTube para una historia real, tipo confesión escandalosa: morbo DIRECTO y explícito, no una insinuación vaga.
+PROMPT_TITULO_YOUTUBE = """Convertí este título de un post de Reddit/foro en un título de YouTube atractivo para un video de historia narrada en español.
 
 Reglas:
 - Máximo 90 caracteres (importante, no te pases).
-- Si el título original menciona o insinúa una traición, infidelidad o vínculo prohibido, dejá explícito QUIÉN hizo QUÉ con QUIÉN (ej: "me acosté con la hija de mi mejor amiga", "mi esposo me engañaba con mi papá"), en vez de diluirlo en algo genérico tipo "un secreto familiar" o "lo que descubrí de mi hermano".
-- Concreto y crudo, no insinuación tipo "no vas a creer lo que pasó" o "esto cambió todo".
-- No inventes datos ni vínculos que no estén insinuados en el título original: si no da ese detalle, usá lo más explícito que sí da.
+- Generá intriga o curiosidad genuina sobre la historia, sin inventar datos que no estén insinuados en el título original.
 - No uses mayúsculas sostenidas, no uses emojis, no uses signos de exclamación de más.
 - No copies el título original palabra por palabra: reformulalo como titular de YouTube.
+- Nada de clickbait falso ni exagerado que no se corresponda con la historia.
 
 Título original: "{titulo}"
 
 Devolvé ÚNICAMENTE el título final, sin comillas, sin explicaciones."""
-
-
-PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA frase corta para el cartel de una miniatura de YouTube: morbo DIRECTO y explícito, no una insinuación vaga.
-
-Reglas de contenido (esto es lo más importante):
-- Si el resumen tiene una traición, infidelidad o vínculo prohibido, nombrá explícitamente QUIÉN hizo QUÉ con QUIÉN (ej: "me acosté con la hija de mi mejor amiga", "mi esposo me engañaba con mi propio padre"). No lo diluyas en algo genérico ni lo dejes oculto.
-- PROHIBIDO el estilo "hasta que...", "nadie sabía que...", "lo que descubrí..." o cualquier insinuación que oculte el hecho: acá se dice el hecho de frente, sin vueltas.
-- PROHIBIDO sonar plana o descriptiva sin impacto tipo "mi hermana me hizo esto": tiene que doler/escandalizar apenas se lee.
-- Tono provocador, primera persona o afirmación directa.
-- Sin inventar datos que no estén en el resumen: si no da ese detalle explícito, usá el hecho más escandaloso que sí da, de forma directa.
-- Sin emojis, sin comillas.
-- Máximo 12 palabras.
-
-Ejemplos del estilo que quiero (no copiar literal, son solo referencia de tono):
-- "ME ACOSTÉ CON LA HIJA DE MI MEJOR AMIGA"
-- "MI ESPOSO ME ENGAÑABA CON MI PROPIO PADRE"
-- "MI HERMANO ROMPIÓ MI TESIS Y MIS PADRES SE RIERON"
-
-Resumen: "{resumen}"
-
-Devolvé ÚNICAMENTE la frase final, sin explicaciones."""
-
-
-def _obtener_plantilla_intro_desde_drive(logger=None):
-    """
-    Descarga (si hace falta) la plantilla de la intro de resumen
-    desde gdrive:intro/intro_plantilla.png. Devuelve la ruta local,
-    o None si no se pudo conseguir."""
-    os.makedirs(CARPETA_INTRO_LOCAL, exist_ok=True)
-    ruta_local = os.path.join(CARPETA_INTRO_LOCAL, "intro_plantilla.png")
-    # Siempre se vuelve a bajar de Drive (no se cachea la primera descarga
-    # para siempre): asi si se actualiza la plantilla en Drive, el pipeline
-    # usa la version nueva automaticamente en la proxima corrida.
-    try:
-        resultado = subprocess.run(
-            ["rclone", "copyto", f"{RCLONE_REMOTE_INTRO}/intro_plantilla.png", ruta_local],
-            capture_output=True, text=True,
-        )
-        if resultado.returncode != 0 or not os.path.exists(ruta_local):
-            if logger:
-                logger.warning(f"No se pudo bajar la plantilla de intro: {resultado.stderr[-300:]}")
-            return None
-        return ruta_local
-    except Exception as e:
-        if logger:
-            logger.warning(f"Error bajando plantilla de intro: {e}")
-        return None
-
-
-def _llamar_gemini(prompt, timeout=30, intentos_maximos=4, logger=None, etiqueta="Gemini"):
-    """Llama a Gemini con reintentos (backoff exponencial) para no perder
-    la miniatura/titulo por un 503/429 puntual o un timeout. Reintenta en
-    503, 429 y timeouts/errores de red; NO reintenta en 400/401/403 (esos
-    no se arreglan reintentando). Devuelve el texto de la respuesta o
-    None si se agotan los intentos."""
-    espera = 2
-    for intento in range(1, intentos_maximos + 1):
-        try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
-                headers={"x-goog-api-key": GEMINI_API_KEY},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=timeout,
-            )
-            if resp.status_code in (429, 503) and intento < intentos_maximos:
-                if logger:
-                    logger.warning(f"{etiqueta}: {resp.status_code}, reintentando en {espera}s (intento {intento}/{intentos_maximos})...")
-                time.sleep(espera)
-                espera *= 2
-                continue
-            resp.raise_for_status()
-            datos = resp.json()
-            candidatos = datos.get("candidates")
-            if not candidatos:
-                motivo_bloqueo = (datos.get("promptFeedback") or {}).get("blockReason", "desconocido")
-                raise RuntimeError(f"Gemini bloqueo la respuesta (blockReason={motivo_bloqueo}, sin candidates)")
-            candidato = candidatos[0]
-            partes = (candidato.get("content") or {}).get("parts")
-            if not partes:
-                motivo_finish = candidato.get("finishReason", "desconocido")
-                raise RuntimeError(f"Gemini no devolvio texto (finishReason={motivo_finish}, sin content/parts; probable filtro de seguridad)")
-            return partes[0]["text"].strip().strip('"')
-        except Exception as e:
-            if intento >= intentos_maximos:
-                if logger:
-                    logger.warning(f"{etiqueta}: fallo tras {intentos_maximos} intentos: {e}")
-                return None
-            if logger:
-                logger.warning(f"{etiqueta}: error ({e}), reintentando en {espera}s (intento {intento}/{intentos_maximos})...")
-            time.sleep(espera)
-            espera *= 2
-    return None
-
-
-def _generar_texto_miniatura(historia_completa, resumen_texto, titulo_youtube="", logger=None):
-    """Usa Gemini con la historia COMPLETA (sin recortar, aunque tenga
-    8-10 mil palabras) para redactar el texto blanco que va dentro de la
-    miniatura: una frase dramatica/intrigante de 150 a 200 caracteres,
-    distinta al titulo de YouTube (no debe repetirlo ni parafrasearlo
-    igual). Si Gemini falla o no hay API key, arma un respaldo a partir
-    del resumen."""
-    texto_base = (historia_completa or resumen_texto or "").strip()
-
-    def _respaldo():
-        base = " ".join((resumen_texto or texto_base).split())
-        if len(base) > 200:
-            base = base[:197].rstrip() + "…"
-        return base.upper()
-
-    if not GEMINI_API_KEY or not texto_base:
-        return _respaldo()
-
-    prompt = (
-        "Lee esta historia real completa (en espanol) y elegi el detalle "
-        "mas escandaloso y explicito de toda la historia (quien hizo que "
-        "con quien: la traicion, el engaño o el vinculo prohibido concreto) "
-        "para usar como texto de una miniatura de YouTube. Escribe UNA sola "
-        "frase en espanol, en MAYUSCULAS, de entre 150 y 200 caracteres "
-        "exactos de largo (ni mas corta ni mas larga), directa y cruda, "
-        "tipo confesion de morbo real, NO una insinuacion vaga tipo 'un "
-        "secreto salio a la luz'. Nombra el hecho concreto (ejemplos de "
-        "tono, no copiar: 'ME ACOSTE CON LA HIJA DE MI MEJOR AMIGA', 'MI "
-        "ESPOSO ME ENGAÑABA CON MI PROPIO PADRE'). Esta frase NO debe "
-        "repetir ni parafrasear el titulo del video que se muestra abajo — "
-        "tiene que aportar un dato o giro DISTINTO y mas especifico de la "
-        "historia. No inventes nada que no este en la historia. No escribas "
-        "nada mas que esa frase, sin comillas ni explicaciones.\n\n"
-        f"Titulo del video (no lo repitas): {titulo_youtube}\n\n"
-        f"Historia completa:\n{texto_base}"
-    )
-    texto = _llamar_gemini(prompt, timeout=45, logger=logger, etiqueta="texto de miniatura")
-    if not texto:
-        return _respaldo()
-    texto = texto.upper()
-    if len(texto) > 200:
-        texto = texto[:197].rstrip() + "…"
-    return texto
-
-
-def _generar_pregunta_miniatura(resumen_texto, logger=None):
-    """Genera con Gemini la pregunta-dilema que va en la miniatura (estilo
-    '¿Soy la mala por...?'). Si Gemini falla o no hay API key, arma una
-    versión de respaldo genérica a partir del resumen."""
-    def _respaldo():
-        base = " ".join(resumen_texto.split())[:70].rstrip()
-        return "LA HISTORIA QUE NADIE SE ATREVIÓ A CONTAR"
-
-    if not GEMINI_API_KEY:
-        return _respaldo()
-
-    prompt = PROMPT_PREGUNTA_MINIATURA.format(resumen=resumen_texto[:600])
-    pregunta = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="pregunta de miniatura")
-    if not pregunta:
-        return _respaldo()
-    return pregunta.upper()
 
 
 def _armar_titulo_youtube(titulo_resumen, subreddits, logger=None):
@@ -2537,13 +2713,25 @@ def _armar_titulo_youtube(titulo_resumen, subreddits, logger=None):
     if not GEMINI_API_KEY:
         return _respaldo()
 
-    prompt = PROMPT_TITULO_YOUTUBE.format(titulo=titulo_original)
-    titulo_gemini = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="titulo de YouTube")
-    if not titulo_gemini:
+    try:
+        prompt = PROMPT_TITULO_YOUTUBE.format(titulo=titulo_original)
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent",
+            params={"key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        titulo_gemini = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip().strip('"')
+        if not titulo_gemini:
+            return _respaldo()
+        if len(titulo_gemini) > disponible:
+            titulo_gemini = titulo_gemini[:disponible - 1].rstrip() + "…"
+        return titulo_gemini + sufijo
+    except Exception as e:
+        if logger:
+            logger.warning(f"Fallo al generar título con Gemini, se usa el título original: {e}")
         return _respaldo()
-    if len(titulo_gemini) > disponible:
-        titulo_gemini = titulo_gemini[:disponible - 1].rstrip() + "…"
-    return titulo_gemini + sufijo
 
 
 def generar_miniatura(ruta_video, titulo_miniatura, ruta_salida, logger=None):
@@ -2579,9 +2767,10 @@ def generar_miniatura(ruta_video, titulo_miniatura, ruta_salida, logger=None):
     lineas = lineas[:3]
 
     nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
-    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
-    if not os.path.exists(ruta_fuente):
-        ruta_fuente = None
+    ruta_fuente = None
+    for archivo in os.listdir(CARPETA_FUENTES) if os.path.isdir(CARPETA_FUENTES) else []:
+        ruta_fuente = os.path.join(CARPETA_FUENTES, archivo)
+        break
 
     filtros = [f"scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO}", "drawbox=x=0:y=ih*0.55:w=iw:h=ih*0.45:color=black@0.55:t=fill"]
     y_inicial = 68
@@ -2607,565 +2796,9 @@ def generar_miniatura(ruta_video, titulo_miniatura, ruta_salida, logger=None):
         logger.info(f"Miniatura generada: {ruta_salida}")
     return ruta_salida
 
-
-def generar_fondo_ia_pollinations(resumen_texto, ruta_salida, logger=None, ancho=None, alto=None, prompt_personalizado=None):
-    """Genera una imagen con IA (Pollinations, gratis, sin API key). Si
-    prompt_personalizado viene armado (escena puntual de la historia,
-    generada con _generar_prompt_imagen_miniatura), lo usa; si no, cae al
-    prompt generico anterior (dos personas confrontandose) a partir del
-    resumen corto."""
-    import urllib.parse
-
-    ancho = ancho or RESOLUCION_ANCHO
-    alto = alto or RESOLUCION_ALTO
-
-    if prompt_personalizado:
-        prompt = (
-            f"{prompt_personalizado}, photorealistic, cinematic photography, "
-            f"film still, natural lighting, shallow depth of field, realistic "
-            f"faces, high detail"
-        )
-    else:
-        resumen_corto = " ".join(resumen_texto.split())[:180]
-        prompt = (
-            f"{resumen_corto}, two people confronting each other, dramatic tense "
-            f"argument, photorealistic, cinematic photography, film still, natural "
-            f"lighting, shallow depth of field, realistic faces, high detail"
-        )
-
-    prompt_codificado = urllib.parse.quote(prompt)
-    url = (
-        f"https://image.pollinations.ai/prompt/{prompt_codificado}"
-        f"?width={ancho}&height={alto}&nologo=true"
-    )
-    try:
-        r = requests.get(url, timeout=90)
-        r.raise_for_status()
-        with open(ruta_salida, "wb") as f:
-            f.write(r.content)
-        if logger:
-            logger.info(f"Imagen IA (Pollinations) generada: {ruta_salida}")
-        return ruta_salida
-    except Exception as e:
-        if logger:
-            logger.warning(f"No se pudo generar la imagen con IA (Pollinations): {e}")
-        return None
-
-
-PROMPT_IMAGEN_MINIATURA = """A partir de esta historia real narrada en primera persona y su titulo ya definido, identifica el momento MAS impactante, revelador o intrigante de toda la historia (el giro, la confesion, el hallazgo, la escena que genera mas ganas de saber que paso) y describi ESA escena puntual como prompt de imagen en ingles, para un generador de imagenes fotorrealista.
-
-Reglas del prompt:
-- Debe coincidir con lo que promete el titulo, no ser generico
-- Personajes con su emocion visible (shocked, guilty, crying, furious, etc.)
-- Lugar/escenario concreto segun la historia (kitchen, hospital, courtroom, car, etc.)
-- Un objeto o detalle visual que identifique el conflicto (a letter, a phone screen, a pregnancy test, a broken photo frame, etc.) si la historia lo tiene
-- NO texto en la imagen, NO logos, NO watermarks
-- Una sola escena, no collage
-
-Titulo: {titulo}
-
-Historia completa:
-{historia}
-
-Devolve SOLO el prompt en ingles, una sola linea, sin comillas ni explicacion."""
-
-
-def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
-    """Genera con Gemini un prompt en ingles para Pollinations describiendo
-    la escena mas intrigante/reveladora de TODA la historia (no solo el
-    resumen corto), coherente con el titulo ya generado. Si Gemini falla
-    o no hay API key, devuelve None y generar_fondo_ia_pollinations cae
-    al prompt generico de respaldo (dos personas confrontandose)."""
-    if not GEMINI_API_KEY or not historia_completa:
-        return None
-
-    prompt = PROMPT_IMAGEN_MINIATURA.format(
-        titulo=titulo.strip(),
-        historia=historia_completa.strip()[:4000],
-    )
-    prompt_imagen = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="prompt de imagen")
-    return prompt_imagen or None
-
-
-def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None, historia_completa=None):
-    """Miniatura fija: se dibuja el texto normal de la miniatura (la
-    pregunta-dilema generada con Gemini) sobre la plantilla descargada de
-    Drive (gdrive:miniatura/miniatura_plantilla1.png). Ya no genera nada
-    con IA (Pollinations/seedream): siempre la misma plantilla, solo
-    cambia el texto."""
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
-    import textwrap
-
-    ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
-    if not ruta_plantilla or not os.path.exists(ruta_plantilla):
-        if logger:
-            logger.warning("No hay plantilla de miniatura disponible (Drive).")
-        return None
-
-    pregunta = _generar_pregunta_miniatura(resumen_texto, logger=logger)
-
-    img = Image.open(ruta_plantilla).convert("RGB")
-    draw = ImageDraw.Draw(img)
-    ancho_img, alto_img = img.size
-
-    # Zona de texto calibrada sobre el mockup (1364x768), escalada al
-    # tamaño real de la plantilla por si se reemplaza por otra de
-    # distinta resolución más adelante.
-    escala_x = ancho_img / 1364
-    escala_y = alto_img / 768
-    text_x0 = int(300 * escala_x)
-    text_x1 = int(1180 * escala_x)
-    text_y0 = int(300 * escala_y)
-    text_y1 = int(540 * escala_y)
-    max_w = text_x1 - text_x0
-    max_h = text_y1 - text_y0
-
-    nombre_fuente_ok = asegurar_fuente("Chewy") or FUENTE_POR_DEFECTO
-    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
-    if not os.path.exists(ruta_fuente):
-        ruta_fuente = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
-    font_size = int(70 * escala_y)
-    lines, line_heights = [], []
-    while font_size > 20:
-        font = ImageFont.truetype(ruta_fuente, font_size)
-        avg_char_w = font.getlength("x")
-        wrap_width = max(10, int(max_w / avg_char_w))
-        lines = textwrap.wrap(pregunta, width=wrap_width)
-        line_heights = []
-        total_h = 0
-        ok = True
-        for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            if lw > max_w:
-                ok = False
-                break
-            line_heights.append(lh)
-            total_h += lh * 1.25
-        if ok and total_h <= max_h:
-            break
-        font_size -= 2
-
-    line_spacing = 1.25
-    total_h = sum(h * line_spacing for h in line_heights)
-    cur_y = text_y0 + (max_h - total_h) / 2
-
-    # Degradado rosa-violeta (a tono con los colores de la plantilla) en vez
-    # de negro plano, con una sombra suave debajo para que resalte sobre la
-    # tarjeta blanca.
-    color_rosa = (255, 45, 149)     # rosa fuerte
-    color_violeta = (123, 46, 207)  # violeta
-
-    for line, lh in zip(lines, line_heights):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        lw = bbox[2] - bbox[0]
-        cx = text_x0 + (max_w - lw) / 2
-        y_pos = int(cur_y)
-
-        # Sombra suave (leve desplazamiento + blur) para dar profundidad.
-        pad = 20
-        shadow = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (0, 0, 0, 0))
-        sd = ImageDraw.Draw(shadow)
-        sd.text((pad - bbox[0], pad - bbox[1]), line, font=font, fill=(123, 46, 207, 140))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(6))
-        img.paste(shadow, (int(cx) - pad, y_pos - pad + 4), shadow)
-        draw = ImageDraw.Draw(img)
-
-        # Máscara del texto (blanco = letra) para rellenar con degradado.
-        mask = Image.new("L", (lw, lh), 0)
-        md = ImageDraw.Draw(mask)
-        md.text((-bbox[0], -bbox[1]), line, font=font, fill=255)
-
-        # Degradado horizontal rosa -> violeta del tamaño de la línea.
-        gradiente = Image.new("RGB", (lw, lh), color_rosa)
-        gd = ImageDraw.Draw(gradiente)
-        for gx in range(lw):
-            t = gx / max(1, lw - 1)
-            r = int(color_rosa[0] + (color_violeta[0] - color_rosa[0]) * t)
-            g = int(color_rosa[1] + (color_violeta[1] - color_rosa[1]) * t)
-            b = int(color_rosa[2] + (color_violeta[2] - color_rosa[2]) * t)
-            gd.line([(gx, 0), (gx, lh)], fill=(r, g, b))
-
-        img.paste(gradiente, (int(cx), y_pos), mask)
-        draw = ImageDraw.Draw(img)
-        cur_y += lh * line_spacing
-
-    img = img.resize((RESOLUCION_ANCHO, RESOLUCION_ALTO), Image.LANCZOS)
-    img.save(ruta_salida, quality=95)
-    if logger:
-        logger.info(f"Miniatura (plantilla fija) generada: {ruta_salida}")
-    return ruta_salida
-
-
-GEMINI_MODELO_IMAGEN = "gemini-2.5-flash-image"
-
-
-def _generar_ilustracion_fondo_gemini(resumen_texto, ruta_salida, logger=None):
-    """Genera una ilustracion de fondo (estilo comic simple y oscuro, en dos
-    escenas apiladas) a partir del resumen de la historia, usando Gemini
-    Image (Nano Banana). Devuelve la ruta local del PNG generado, o None si
-    falla (el llamador cae al fondo de gameplay/negro de siempre)."""
-    import base64
-
-    if not GEMINI_API_KEY:
-        if logger:
-            logger.warning("GEMINI_API_KEY vacia: no se genera ilustracion de fondo.")
-        return None
-
-    prompt = (
-        "Ilustracion digital estilo comic simple y oscuro, formato vertical, "
-        "dividida en dos escenas apiladas separadas por una linea blanca, "
-        "representando visualmente esta historia real (SIN texto escrito "
-        "dentro de la imagen, sin logos ni marcas de agua):\n\n"
-        f"{resumen_texto.strip()[:600]}"
-    )
-
-    intentos_maximos = 3
-    espera = 5
-    for intento in range(1, intentos_maximos + 1):
-        try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO_IMAGEN}:generateContent",
-                headers={"x-goog-api-key": GEMINI_API_KEY},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=90,
-            )
-            if resp.status_code == 429:
-                espera_real = espera
-                try:
-                    espera_real = max(espera, int(float(resp.headers.get("Retry-After", espera))))
-                except (TypeError, ValueError):
-                    pass
-                if logger:
-                    logger.warning(
-                        f"Gemini Image devolvio 429. Intento {intento}/{intentos_maximos}, "
-                        f"reintentando en {espera_real}s..."
-                    )
-                if intento < intentos_maximos:
-                    time.sleep(espera_real)
-                    espera *= 2
-                    continue
-                resp.raise_for_status()
-            resp.raise_for_status()
-            datos = resp.json()
-            partes = datos["candidates"][0]["content"]["parts"]
-            datos_b64 = next(
-                (p["inlineData"]["data"] for p in partes if "inlineData" in p), None
-            ) or next(
-                (p["inline_data"]["data"] for p in partes if "inline_data" in p), None
-            )
-            if not datos_b64:
-                raise ValueError("La respuesta de Gemini Image no trajo ninguna imagen")
-            with open(ruta_salida, "wb") as f:
-                f.write(base64.b64decode(datos_b64))
-            if logger:
-                logger.info(f"Ilustracion de fondo generada: {ruta_salida}")
-            return ruta_salida
-        except Exception as e:
-            if intento >= intentos_maximos:
-                if logger:
-                    logger.warning(f"Fallo la generacion de la ilustracion tras {intentos_maximos} intentos: {e}")
-                return None
-            if logger:
-                logger.warning(f"Error generando ilustracion (intento {intento}/{intentos_maximos}): {e}")
-            time.sleep(espera)
-            espera *= 2
-    return None
-
-
-def generar_miniatura_plantilla(titulo_miniatura, ruta_plantilla, ruta_salida, logger=None, ruta_video_fondo=None, resumen_texto=None):
-    """Genera la miniatura a partir de una plantilla fija (tarjeta tipo
-    'post', con el borde exterior transparente) superpuesta sobre, en este
-    orden de prioridad: (1) una ilustracion generada con Gemini Image a
-    partir del resumen de la historia si se pasa resumen_texto, (2) un
-    frame del gameplay si se pasa ruta_video_fondo, o (3) negro si no hay
-    nada de eso disponible. Posicion y tamanos de fuente calibrados a ojo
-    para que el titulo quede bien dentro del recuadro. La tarjeta esta
-    corrida hacia la derecha del cuadro dejando la izquierda libre para el
-    fondo elegido."""
-    texto_miniatura = titulo_miniatura.strip().upper()
-    if len(texto_miniatura) > 110:
-        texto_miniatura = texto_miniatura[:109].rstrip() + "…"
-
-    def envolver(texto, max_chars):
-        palabras = texto.split()
-        lineas, actual, largo = [], [], 0
-        for palabra in palabras:
-            if actual and largo + len(palabra) + 1 > max_chars:
-                lineas.append(" ".join(actual))
-                actual, largo = [], 0
-            actual.append(palabra)
-            largo += len(palabra) + 1
-        if actual:
-            lineas.append(" ".join(actual))
-        return lineas
-
-    lineas = envolver(texto_miniatura, 34)
-    tamano_fuente, y_inicio, alto_linea = 40, 270, 55
-    if len(lineas) > 2:
-        lineas = envolver(texto_miniatura, 45)
-        tamano_fuente, y_inicio, alto_linea = 30, 270, 42
-        lineas = lineas[:3]
-
-    nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
-    ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
-    if not os.path.exists(ruta_fuente):
-        ruta_fuente = None
-
-    desplazamiento_tarjeta = 669
-    tarjeta_x_izq = 89
-    tarjeta_ancho = 1102
-    dibujo_texto = []
-    for i, linea in enumerate(lineas):
-        linea_escapada = linea.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
-        y_pos = y_inicio + i * alto_linea
-        x_expr = f"{tarjeta_x_izq + desplazamiento_tarjeta}+({tarjeta_ancho}-text_w)/2"
-        dibujo_texto.append(
-            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize={tamano_fuente}:"
-            f"borderw=1.2:bordercolor=black:x={x_expr}:y={y_pos}"
-        )
-    cadena_texto = ",".join(dibujo_texto)
-
-    ruta_ilustracion = None
-    if resumen_texto:
-        ruta_ilustracion_tmp = os.path.splitext(ruta_salida)[0] + "_fondo_ia.png"
-        ruta_ilustracion = _generar_ilustracion_fondo_gemini(resumen_texto, ruta_ilustracion_tmp, logger=logger)
-
-    if ruta_ilustracion and os.path.exists(ruta_ilustracion):
-        filtro_complejo = (
-            f"[0:v]scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO}[fondo];"
-            f"[fondo][1:v]overlay={desplazamiento_tarjeta}:0[con];"
-            f"[con]{cadena_texto}[out]"
-        )
-        cmd = [
-            "ffmpeg", "-y", "-i", ruta_ilustracion,
-            "-i", ruta_plantilla,
-            "-filter_complex", filtro_complejo, "-map", "[out]",
-            "-frames:v", "1", ruta_salida,
-        ]
-    elif ruta_video_fondo and os.path.exists(ruta_video_fondo):
-        try:
-            duracion = obtener_duracion_audio(ruta_video_fondo)
-        except Exception:
-            duracion = 10.0
-        instante = min(max(2.0, duracion * 0.15), duracion - 1 if duracion > 1 else 0)
-        filtro_complejo = (
-            f"[1:v]scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO}[tmpl];"
-            f"[0:v][tmpl]overlay={desplazamiento_tarjeta}:0[conmpl];"
-            f"[conmpl]{cadena_texto}[out]"
-        )
-        cmd = [
-            "ffmpeg", "-y", "-ss", str(instante), "-i", ruta_video_fondo,
-            "-i", ruta_plantilla,
-            "-filter_complex", filtro_complejo, "-map", "[out]",
-            "-frames:v", "1", ruta_salida,
-        ]
-    else:
-        cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={RESOLUCION_ANCHO}x{RESOLUCION_ALTO}",
-            "-i", ruta_plantilla,
-            "-filter_complex", f"[0:v][1:v]overlay={desplazamiento_tarjeta}:0[con];[con]{cadena_texto}[out]",
-            "-map", "[out]", "-frames:v", "1", ruta_salida,
-        ]
-
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
-    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
-        if logger:
-            logger.warning(f"No se pudo generar la miniatura con plantilla: {resultado.stderr[-500:]}")
-        return None
-    if logger:
-        logger.info(f"Miniatura (plantilla) generada: {ruta_salida}")
-    return ruta_salida
-
-
-def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida, duracion_intro=10.0, logger=None):
-    """Superpone la plantilla real (logo HSF + tarjeta blanca, croma verde
-    recortado con colorkey) con 2-3 oraciones de contexto centradas dentro
-    del rectangulo blanco, debajo del encabezado. Dura al menos duracion_intro,
-    o mas si el texto es largo (para que de tiempo a leerlo)."""
-    if not ruta_plantilla or not os.path.exists(ruta_plantilla):
-        ruta_plantilla = _obtener_plantilla_intro_desde_drive(logger=logger)
-    if not ruta_plantilla:
-        if logger:
-            logger.warning("No hay plantilla de intro disponible, se omite la tarjeta")
-        return False
-
-    texto_limpio = resumen_texto.strip()
-    palabras_texto = texto_limpio.split()
-    duracion_real = max(duracion_intro, len(palabras_texto) * 0.35)
-
-    # No se trunca a un numero fijo de caracteres a ciegas: se envuelve el
-    # texto completo mas abajo, y solo si de verdad no entra en 6 lineas se
-    # corta la ULTIMA linea visible con "..." (nunca se descartan lineas
-    # completas en silencio).
-    texto = texto_limpio.upper()
-
-    ruta_fuente = _mf_buscar_fuente_condensada()
-    fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
-
-    # Zona de texto dentro del rectangulo blanco de la plantilla (medida
-    # directamente sobre la plantilla real de 1376x768, y escalada a
-    # RESOLUCION_ANCHOxRESOLUCION_ALTO=1920x1080): el blanco va de
-    # x 237-1139 / y 76-692 en la plantilla original, y el header (logo +
-    # nombre) termina en y=286 de esa misma plantilla. Escalado:
-    # x: 237*1.395349=330.7 / 1139*1.395349=1589.4
-    # y: header 286*1.40625=402.2 / blanco-abajo 692*1.40625=973.3
-    from PIL import ImageFont
-
-    x_izq_texto = 330
-    x_der_texto = 1590
-    y_arriba_texto = 415  # un poco debajo del header (~402) para no pisarlo
-    y_abajo_texto = 930   # un poco arriba del borde blanco (~973) de margen
-    ancho_texto_disponible = x_der_texto - x_izq_texto - 160
-    alto_texto_disponible = y_abajo_texto - y_arriba_texto
-
-    def _medir_ancho(txt, fontsize):
-        try:
-            fuente_pil = ImageFont.truetype(ruta_fuente, fontsize) if ruta_fuente else ImageFont.load_default()
-        except Exception:
-            fuente_pil = ImageFont.load_default()
-        bbox = fuente_pil.getbbox(txt)
-        return bbox[2] - bbox[0]
-
-    def _envolver_real(txt, fontsize, ancho_max):
-        palabras = txt.split()
-        lineas_, actual = [], []
-        for palabra in palabras:
-            prueba = " ".join(actual + [palabra])
-            if actual and _medir_ancho(prueba, fontsize) > ancho_max:
-                lineas_.append(" ".join(actual))
-                actual = [palabra]
-            else:
-                actual.append(palabra)
-        if actual:
-            lineas_.append(" ".join(actual))
-        return lineas_
-
-    candidatos = [(56, 68), (50, 61), (44, 54), (38, 47), (32, 40), (27, 34), (22, 29), (18, 24)]
-    lineas, tamano_texto, alto_linea = None, None, None
-    margen_seguridad = 20  # aire extra para que la ultima linea no toque el borde
-    for tamano, alto in candidatos:
-        prueba = _envolver_real(texto, tamano, ancho_texto_disponible)
-        if len(prueba) <= 6 and len(prueba) * alto <= (alto_texto_disponible - margen_seguridad):
-            lineas, tamano_texto, alto_linea = prueba, tamano, alto
-            break
-    if lineas is None:
-        # Ni al tamano mas chico entra completo: se usa el tamano mas chico
-        # igual, pero el corte a 6 lineas queda marcado con "..." en la
-        # ultima linea visible, en vez de desaparecer palabras en silencio.
-        tamano_texto, alto_linea = candidatos[-1]
-        lineas_completas = _envolver_real(texto, tamano_texto, ancho_texto_disponible)
-        if len(lineas_completas) > 6:
-            lineas = lineas_completas[:6]
-            ultima = lineas[-1].rstrip()
-            if ultima.endswith((".", "!", "?", "…")):
-                ultima = ultima[:-1]
-            lineas[-1] = ultima.rstrip() + "…"
-        else:
-            lineas = lineas_completas
-
-    centro_y = (y_arriba_texto + y_abajo_texto) // 2
-    y_inicio = centro_y - (len(lineas) * alto_linea) // 2
-    ventana = f"between(t,0,{duracion_real})"
-
-    dibujo_texto = []
-    for i, linea in enumerate(lineas):
-        linea_escapada = _mf_escapar(linea)
-        y_pos = y_inicio + i * alto_linea
-        dibujo_texto.append(
-            f"drawtext=text='{linea_escapada}'{fontfile}:fontcolor=black:fontsize={tamano_texto}:"
-            f"x=(w-text_w)/2:y={y_pos}:enable='{ventana}'"
-        )
-    cadena_texto = ",".join(dibujo_texto)
-
-    filtro_complejo = (
-        f"[1:v]scale={RESOLUCION_ANCHO}:{RESOLUCION_ALTO},colorkey=0x1FDD77:0.35:0.15[tmpl];"
-        f"[0:v][tmpl]overlay=0:0:enable='{ventana}'[conplantilla];"
-        f"[conplantilla]{cadena_texto}[vout]"
-    )
-    cmd = [
-        "ffmpeg", "-y", "-i", ruta_video, "-i", ruta_plantilla,
-        "-filter_complex", filtro_complejo,
-        "-map", "[vout]", "-map", "0:a",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "copy",
-        ruta_salida,
-    ]
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
-    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
-        if logger:
-            logger.warning(f"No se pudo agregar la intro de resumen al video: {resultado.stderr[-500:]}")
-        return False
-    if logger:
-        logger.info(f"Intro de resumen agregada ({duracion_real:.1f}s): {ruta_salida}")
-    return True
-
 HASHTAGS_FIJOS = ["#historiasreales", "#confesiones", "#reddit", "#storytime", "#historiassinfiltro"]
 
-PROMPT_TAGS_SEO = """Actuá como una herramienta de SEO para YouTube (estilo vidIQ/TubeBuddy). A partir del título y el resumen de esta historia real, generá palabras clave y frases que la GENTE REALMENTE ESCRIBE en el buscador de YouTube para encontrar este tipo de contenido (no inventes términos raros, pensá en búsquedas reales).
-
-Mezclá:
-- Términos amplios de la categoría (ej: historias de reddit, confesiones anonimas, historias reales de infidelidad, relatos de traicion familiar)
-- Términos específicos del tema puntual de ESTA historia (ej: si es sobre una herencia robada por un hermano: pelea por herencia familiar, hermano roba herencia, herencia y traicion)
-- Variantes largas tipo pregunta (ej: que hacer si mi familia me traiciona)
-
-Título: "{titulo}"
-Resumen: "{resumen}"
-
-Devolvé SOLO una lista de 15 a 20 términos separados por coma, en español, minúsculas, sin numerar, sin explicaciones, sin hashtags (#)."""
-
-PROMPT_HASHTAGS_SEO = """A partir del título y resumen de esta historia real, elegí 4 hashtags para YouTube: 2 amplios de la categoría (historias/confesiones/reddit) y 2 específicos del tema puntual de esta historia en particular (el conflicto, la relación entre personas, el giro).
-
-Título: "{titulo}"
-Resumen: "{resumen}"
-
-Devolvé SOLO los 4 hashtags separados por espacio, formato #palabrasjuntas en minúscula, sin explicaciones."""
-
-
-def _generar_tags_seo_gemini(titulo, resumen_texto, logger=None):
-    """Genera tags de búsqueda real (estilo vidIQ) con Gemini a partir del
-    título y resumen de la historia. Si Gemini falla, devuelve lista vacía
-    (el llamador cae a los tags fijos de siempre)."""
-    if not GEMINI_API_KEY:
-        if logger:
-            logger.warning("Tags SEO: sin GEMINI_API_KEY, se usan tags de respaldo (palabras del título).")
-        return []
-    prompt = PROMPT_TAGS_SEO.format(titulo=titulo, resumen=resumen_texto[:600])
-    resultado_gemini = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="tags SEO")
-    if not resultado_gemini:
-        if logger:
-            logger.warning("Tags SEO: Gemini no respondió, se usan tags de respaldo (palabras del título).")
-        return []
-    tags = [t.strip().lower() for t in resultado_gemini.split(",") if t.strip()]
-    if logger:
-        logger.info(f"Tags SEO (Gemini) generados: {len(tags)} términos -> {tags}")
-    return tags
-
-
-def _generar_hashtags_seo_gemini(titulo, resumen_texto, logger=None):
-    """Genera 4 hashtags (2 amplios + 2 específicos del tema) con Gemini.
-    Si falla, devuelve None (el llamador cae a HASHTAGS_FIJOS de siempre)."""
-    if not GEMINI_API_KEY:
-        if logger:
-            logger.warning("Hashtags SEO: sin GEMINI_API_KEY, se usan los hashtags fijos.")
-        return None
-    prompt = PROMPT_HASHTAGS_SEO.format(titulo=titulo, resumen=resumen_texto[:600])
-    resultado_gemini = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="hashtags SEO")
-    if not resultado_gemini:
-        if logger:
-            logger.warning("Hashtags SEO: Gemini no respondió, se usan los hashtags fijos.")
-        return None
-    hashtags = [h.strip() for h in resultado_gemini.split() if h.strip().startswith("#")]
-    if not hashtags and logger:
-        logger.warning("Hashtags SEO: respuesta de Gemini sin hashtags válidos, se usan los hashtags fijos.")
-    elif hashtags and logger:
-        logger.info(f"Hashtags SEO (Gemini) generados: {hashtags}")
-    return hashtags or None
-
-
-def _armar_descripcion_youtube(subreddits, cantidad_historias, hashtags=None):
-    hashtags_finales = hashtags if hashtags else HASHTAGS_FIJOS
+def _armar_descripcion_youtube(subreddits, cantidad_historias):
     partes = [
         "Una historia real que te va a dejar pensando. Confesiones, secretos de familia y relatos que la gente compartió de forma anónima en internet.",
         "",
@@ -3177,58 +2810,34 @@ def _armar_descripcion_youtube(subreddits, cantidad_historias, hashtags=None):
         "",
         "🔔 Suscribite para más historias cada semana.",
         "",
-        " ".join(hashtags_finales),
+        " ".join(HASHTAGS_FIJOS),
     ]
     return "\n".join(partes)
 
 
-def _armar_tags_youtube(titulo_resumen, resumen_texto=None, logger=None):
-    """Arma la lista de etiquetas (tags) del video: tags fijos del canal +
-    términos de búsqueda real generados con Gemini (estilo vidIQ) a partir
-    del título y el resumen. Si Gemini falla, cae a palabras sueltas del
-    título (comportamiento viejo) para no dejar el video sin tags."""
+def _armar_tags_youtube(titulo_resumen):
+    """Arma la lista de etiquetas (tags) del video: algunas fijas del canal
+    más algunas palabras sueltas sacadas del título de la historia, para
+    ayudar al algoritmo de YouTube a entender el contenido."""
     tags_fijos = [
         "historias reales", "historias de reddit", "confesiones",
         "historias sin filtro", "relatos reales", "storytime en español",
         "historias narradas", "secretos de familia",
     ]
-
-    tags_seo = _generar_tags_seo_gemini(titulo_resumen, resumen_texto or titulo_resumen, logger=logger)
-    if tags_seo:
-        tags = tags_fijos + tags_seo
-    else:
-        if logger:
-            logger.warning("Tags YouTube: usando respaldo de palabras sueltas del título (sin tags SEO de Gemini).")
-        palabras_titulo = [
-            p.strip(".,!?¿¡\"'").lower()
-            for p in titulo_resumen.split()
-            if len(p) > 3
-        ]
-        tags = tags_fijos + palabras_titulo
-
-    return _sanear_tags_youtube(tags)
-
-
-def _sanear_tags_youtube(tags, limite_seguro=460):
-    """Filtra y recorta tags para no chocar con el limite real de YouTube:
-    no son 500 caracteres planos, YouTube cuenta cada tag con espacios
-    como si fuera entre comillas (+2 caracteres). Con el recorte viejo
-    (480 sin ese +2) el total real se pasaba de 500 y la subida fallaba
-    con error 'invalidTags' (ver caso Te_imaginas_atrapar_a_tu_propio_hermano,
-    23 tags -> 508 caracteres reales, YouTube lo rechazo).
-    Ademas saca duplicados y caracteres invalidos (<, >, ")."""
-    vistos = set()
+    palabras_titulo = [
+        p.strip(".,!?¿¡\"'").lower()
+        for p in titulo_resumen.split()
+        if len(p) > 3
+    ]
+    tags = tags_fijos + palabras_titulo
+    # YouTube limita el total de tags a 500 caracteres sumados; se recorta
+    # por las dudas para no pasarse.
     tags_final, largo = [], 0
     for t in tags:
-        t = t.strip().replace("<", "").replace(">", "").replace('"', "")
-        if not t or t.lower() in vistos:
-            continue
-        costo = len(t) + (2 if " " in t else 0) + 1  # +1 por la coma separadora
-        if largo + costo > limite_seguro:
+        if largo + len(t) + 1 > 480:
             break
-        vistos.add(t.lower())
         tags_final.append(t)
-        largo += costo
+        largo += len(t) + 1
     return tags_final
 
 
@@ -3263,19 +2872,18 @@ def _subir_ultimo_resultado_a_youtube(logger):
     youtube = build("youtube", "v3", credentials=credenciales)
 
     titulo = _armar_titulo_youtube(resultado["titulo_resumen"], resultado["subreddits"])
-    hashtags_seo = _generar_hashtags_seo_gemini(resultado["titulo_resumen"], resultado.get("guion") or resultado["titulo_resumen"], logger=logger)
-    descripcion = _armar_descripcion_youtube(resultado["subreddits"], resultado["cantidad_historias"], hashtags=hashtags_seo)
+    descripcion = _armar_descripcion_youtube(resultado["subreddits"], resultado["cantidad_historias"])
     logger.info(f"Subiendo a YouTube: {titulo}")
 
     cuerpo = {
         "snippet": {
             "title": titulo,
             "description": descripcion,
-            "tags": _armar_tags_youtube(resultado["titulo_resumen"], resultado.get("guion"), logger=logger),
+            "tags": _armar_tags_youtube(resultado["titulo_resumen"]),
             "categoryId": "24",  # Entretenimiento
         },
         "status": {
-            "privacyStatus": os.environ.get("HSF_PRIVACIDAD_YOUTUBE", "public"),
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
             # Declaración obligatoria (política YouTube 2026): la voz es
             # síntesis de audio por IA (edge_tts), así que se marca "Sí" en
@@ -3306,17 +2914,7 @@ def _subir_ultimo_resultado_a_youtube(logger):
         # " | Historia real" (ese sufijo es para la lista de videos, en la
         # miniatura ocupa espacio de más sin aportar nada).
         titulo_para_imagen = titulo.replace(" | Historia real", "")
-        # Plantilla fija en Drive (gdrive:miniatura/miniatura_plantilla1.png):
-        # mismo diseño siempre, solo cambia el texto. Sin generación con IA.
-        ok_miniatura = generar_miniatura_clickbait(
-            titulo_para_imagen, resultado["titulo_resumen"], ruta_miniatura, logger=logger,
-            historia_completa=resultado.get("guion"),
-        )
-        if not ok_miniatura:
-            # Último respaldo, solo por si la plantilla de Drive no se
-            # pudo descargar: un frame del video, para que el video no
-            # quede sin miniatura.
-            ok_miniatura = generar_miniatura(resultado["ruta_video"], titulo_para_imagen, ruta_miniatura, logger=logger)
+        ok_miniatura = generar_miniatura(resultado["ruta_video"], titulo_para_imagen, ruta_miniatura, logger=logger)
         if ok_miniatura:
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(ruta_miniatura, mimetype="image/jpeg")).execute()
             logger.info("✅ Miniatura subida correctamente.")
@@ -3341,7 +2939,6 @@ if __name__ == "__main__":
     """
 
     logger, ruta_log = crear_logger_video()
-    ruta_gameplay_prueba = _elegir_gameplay_desde_drive(logger=logger)
     procesar_todo(
         texto_bruto=TEXTO_PRUEBA,
         frases_por_bloque=3,
@@ -3362,8 +2959,7 @@ if __name__ == "__main__":
         ancho_sub_pct=73,
         pos_y_pct=50,
         efecto_video="ninguno",
-        fondo_gameplay=bool(ruta_gameplay_prueba),
-        ruta_gameplay=ruta_gameplay_prueba,
+        fondo_gameplay=True,
         logger=logger,
         ruta_log=ruta_log,
     )
@@ -3377,10 +2973,12 @@ if __name__ == "__main__":
 
     ruta_video_absoluta = os.path.join(CARPETA_VIDEOS, resultado_bruto["video"])
     print(f"=== Video de prueba generado: {ruta_video_absoluta} ===")
+    print(f"=== DEBUG: sys.argv = {sys.argv} ===")
 
     # Subir a YouTube solo si se pasa el flag --subir (para no gastar cuota
     # ni publicar de más mientras se prueba solo el video).
     if "--subir" in sys.argv:
+        print("=== DEBUG: entrando al bloque de subida a YouTube ===")
         _ULTIMO_RESULTADO_AUTOMATICO = {
             "ruta_video": ruta_video_absoluta,
             "titulo_resumen": "Nunca pensé que algo tan pequeño pudiera cambiarlo todo (prueba)",
@@ -3395,477 +2993,3 @@ if __name__ == "__main__":
             print(f"=== ERROR subiendo a YouTube: {e} ===")
     else:
         print("=== No se subió a YouTube (corré con: python hsf_engine.py --subir) ===")
-
-
-# ============================================================
-# ---- Miniatura estilo foto (v1.0, integrada al pipeline) ----
-# Foto real de fondo (Pollinations/Nanobanana, sujeto en tercio
-# izquierdo) + logo HSF + titulo (fuente Anton) + cartel rojo con
-# el gancho. Es el PRIMER intento en la cadena de miniaturas; si algo
-# falla, cae a generar_miniatura_clickbait / plantilla / frame, como ya
-# estaba.
-# ============================================================
-
-
-# ============================================================
-# ---- Miniatura estilo foto (v1.0, integrada al pipeline) ----
-# Foto real de fondo (Pollinations/Nanobanana, sujeto en tercio
-# izquierdo) + logo HSF + titulo (fuente Anton) + cartel rojo con
-# el gancho. Es el PRIMER intento en la cadena de miniaturas; si algo
-# falla, cae a generar_miniatura (frame simple del video).
-# ============================================================
-POLLINATIONS_API_KEY = os.environ.get("POLLINATIONS_API_KEY")
-POLLINATIONS_MODELO_IMAGEN = "seedream-pro"
-
-
-def generar_ilustracion_pollinations(resumen_texto, ruta_salida, logger=None, imagen_referencia=None):
-    """Genera SOLO la foto de fondo (sin texto, sin logo) a partir del
-    resumen de la historia: una persona en el tercio izquierdo, el resto
-    del cuadro oscuro/vacío para superponer texto después."""
-    prompt = (
-        "Foto realista, formato horizontal 16:9, estilo fotograma de "
-        "pelicula de suspenso/drama, pensada para generar morbo e intriga "
-        "en quien la ve (que quiera saber que paso). RECREA EL MOMENTO "
-        "EXACTO DE MAYOR TENSION de esta historia real -como si fuera el "
-        "segundo justo ANTES de una confrontacion o justo cuando se "
-        "descubre un secreto/una traicion-, con 2 o 3 PERSONAS (los "
-        "involucrados directos segun el resumen: la protagonista y la "
-        "otra/s persona/s con las que tiene el conflicto): "
-        + resumen_texto.strip()[:600] +
-        ". Miradas cargadas de tension/acusacion/culpa entre los personajes "
-        "(no mirando a camara), lenguaje corporal de secreto o confrontacion "
-        "(brazos cruzados, alguien dando la espalda, alguien tapandose la "
-        "cara, alguien mostrando algo en un celular o una foto sin que se "
-        "lea el contenido). La escena/las personas deben ocupar la MITAD "
-        "IZQUIERDA del cuadro; la mitad derecha queda oscura/fuera de "
-        "foco/vacia, para superponer texto despues. Iluminacion cinematica "
-        "oscura y dramatica, alto contraste, como en un thriller. NO "
-        "incluir ningun texto, letras, logos, marcas de agua, ni interfaz "
-        "de ningun tipo en la imagen."
-    )
-    cuerpo = {
-        "prompt": prompt, "model": POLLINATIONS_MODELO_IMAGEN,
-        "size": "1280x720", "response_format": "b64_json",
-    }
-    if imagen_referencia:
-        cuerpo["image"] = imagen_referencia
-    intentos_maximos, espera = 3, 5
-    for intento in range(1, intentos_maximos + 1):
-        try:
-            resp = requests.post(
-                "https://gen.pollinations.ai/v1/images/generations",
-                headers={"Authorization": f"Bearer {POLLINATIONS_API_KEY}"},
-                json=cuerpo, timeout=90,
-            )
-            if resp.status_code in (429, 503) and intento < intentos_maximos:
-                if logger:
-                    logger.warning(f"Pollinations {resp.status_code}, reintentando en {espera}s...")
-                time.sleep(espera); espera *= 2; continue
-            resp.raise_for_status()
-            datos_b64 = resp.json()["data"][0]["b64_json"]
-            with open(ruta_salida, "wb") as f:
-                f.write(base64.b64decode(datos_b64))
-            if logger:
-                logger.info(f"Ilustracion (estilo foto) generada: {ruta_salida}")
-            return ruta_salida
-        except Exception as e:
-            if intento >= intentos_maximos:
-                if logger:
-                    logger.warning(f"Fallo generar_ilustracion_pollinations tras {intentos_maximos} intentos: {e}")
-                return None
-            time.sleep(espera); espera *= 2
-    return None
-
-
-def generar_miniatura_nanobanana_pro(titulo_miniatura, resumen_texto, ruta_salida, logger=None, historia_completa=None):
-    """Genera la miniatura en dos etapas:
-    1) nanobanana-pro (Pollinations) genera SOLO la foto de fondo dramatica
-       con degradado oscuro arriba/abajo (sin texto, sin logo, sin franja:
-       eso evita el problema conocido de estos modelos de IA de dibujar mal
-       el texto/logo).
-    2) Pillow (deterministico, sin IA) dibuja encima: la franja roja solida
-       abajo, el logo real (assets/logo_hsf.png), el titulo en mayuscula con
-       anton_black.ttf (ultima palabra en amarillo) y la frase de la franja.
-    Si algo falla o no hay API key, devuelve None y la cadena de miniaturas
-    cae al siguiente metodo (generar_miniatura_nueva)."""
-    from PIL import Image, ImageDraw, ImageFont
-
-    if not POLLINATIONS_API_KEY:
-        if logger:
-            logger.warning("POLLINATIONS_API_KEY vacia: no se genera miniatura nanobanana-pro.")
-        return None
-
-    ANCHO, ALTO = 1280, 720
-
-    titular = _generar_texto_miniatura(
-        historia_completa, resumen_texto, titulo_youtube=titulo_miniatura, logger=logger
-    ).strip().upper()
-
-    franja_texto = _generar_pregunta_miniatura(historia_completa or resumen_texto, logger=logger).strip().upper()
-
-    descripcion_escena = _generar_prompt_imagen_miniatura(
-        historia_completa or resumen_texto, titulo_miniatura, logger=logger
-    )
-    if not descripcion_escena:
-        descripcion_escena = (
-            "One person in emotional distress, close-up portrait, inside a home."
-        )
-
-    URL_PLANTILLA_REFERENCIA = "https://raw.githubusercontent.com/evansxandera1-tech/hsf-engine/main/assets/miniatura_referencia.png"
-
-    prompt = (
-        "16:9 dark suspense comic book illustration, noir style, thick ink "
-        "outlines, heavy crosshatch shadows, high contrast, cinematic "
-        "tension, cold blue and dark teal color palette. Use the reference "
-        "image as the exact art style, lighting and composition guide. "
-        f"Scene: {descripcion_escena} "
-        "COMPOSITION RULE (mandatory): the scene/subject(s) must occupy "
-        "ONLY the LEFT half of the frame. The RIGHT half of the image must "
-        "be solid black negative space, completely empty and clean, no "
-        "objects, no texture, no gradient details, so text can be placed "
-        "on top of it afterwards. Comic book art style, NOT photorealism. "
-        "Absolutely no text, no letters, no words, no logos, no "
-        "identifiable faces. "
-        f"Resolution {ANCHO}x{ALTO}."
-    )
-
-    cuerpo = {
-        "prompt": prompt, "model": "seedream-pro",
-        "size": f"{ANCHO}x{ALTO}", "response_format": "b64_json",
-        "image": URL_PLANTILLA_REFERENCIA,
-    }
-    ruta_fondo = ruta_salida + ".fondo_tmp.png"
-    intentos_maximos, espera = 3, 5
-    fondo_ok = False
-    for intento in range(1, intentos_maximos + 1):
-        try:
-            resp = requests.post(
-                "https://gen.pollinations.ai/v1/images/generations",
-                headers={"Authorization": f"Bearer {POLLINATIONS_API_KEY}"},
-                json=cuerpo, timeout=120,
-            )
-            if resp.status_code in (429, 503) and intento < intentos_maximos:
-                if logger:
-                    logger.warning(f"Pollinations {resp.status_code} (nanobanana-pro), reintentando en {espera}s...")
-                time.sleep(espera); espera *= 2; continue
-            resp.raise_for_status()
-            datos_b64 = resp.json()["data"][0]["b64_json"]
-            with open(ruta_fondo, "wb") as f:
-                f.write(base64.b64decode(datos_b64))
-            fondo_ok = True
-            break
-        except Exception as e:
-            if intento >= intentos_maximos:
-                if logger:
-                    logger.warning(f"Fallo al generar el fondo IA (nanobanana-pro) tras {intentos_maximos} intentos: {e}")
-                return None
-            time.sleep(espera); espera *= 2
-
-    if not fondo_ok:
-        return None
-
-    try:
-        base = Image.open(ruta_fondo).convert("RGB").resize((ANCHO, ALTO)).convert("RGBA")
-
-        # Degradado oscuro progresivo (no corte duro): empieza a oscurecer
-        # suave desde el 35% del ancho y llega a negro solido en el 55%,
-        # garantizando que la zona del texto (desde el 44%) quede siempre
-        # legible sin importar si la escena de la IA se pasa un poco.
-        X_INICIO_DEGRADADO = int(ANCHO * 0.35)
-        X_FIN_DEGRADADO = int(ANCHO * 0.55)
-        fila_gradiente = Image.new("L", (ANCHO, 1), 0)
-        pixeles_gradiente = fila_gradiente.load()
-        for x in range(ANCHO):
-            if x < X_INICIO_DEGRADADO:
-                alpha = 0
-            elif x >= X_FIN_DEGRADADO:
-                alpha = 255
-            else:
-                alpha = int(255 * (x - X_INICIO_DEGRADADO) / (X_FIN_DEGRADADO - X_INICIO_DEGRADADO))
-            pixeles_gradiente[x, 0] = alpha
-        mascara_degradado = fila_gradiente.resize((ANCHO, ALTO))
-        capa_negra = Image.new("RGBA", base.size, (0, 0, 0, 255))
-        base = Image.composite(capa_negra, base, mascara_degradado)
-
-        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-
-        RUTA_FUENTE_ANTON = os.path.join(CARPETA_FUENTES, "anton_black.ttf")
-        RUTA_LOGO = os.path.join(CARPETA_BASE, "assets", "logo_hsf.png")
-
-        def _fuente(tamano):
-            try:
-                return ImageFont.truetype(RUTA_FUENTE_ANTON, tamano)
-            except Exception:
-                return ImageFont.load_default()
-
-        AMARILLO = (255, 214, 0, 255)
-        BLANCO = (255, 255, 255, 255)
-        ROJO_FRANJA = (176, 20, 20, 255)
-
-        ALTO_FRANJA = 90
-        draw.rectangle(
-            [(0, ALTO - ALTO_FRANJA), (ANCHO, ALTO)],
-            fill=ROJO_FRANJA,
-        )
-
-        try:
-            logo = Image.open(RUTA_LOGO).convert("RGBA")
-            logo_alto_destino = 70
-            proporcion = logo_alto_destino / logo.height
-            logo = logo.resize((int(logo.width * proporcion), logo_alto_destino))
-            overlay.paste(logo, (24, 20), logo)
-        except Exception as e:
-            if logger:
-                logger.warning(f"No se pudo pegar el logo real en la miniatura: {e}")
-
-        X_TITULO = int(ANCHO * 0.44)
-        MAX_ANCHO_TITULO = ANCHO - X_TITULO - 24
-        MAX_ALTO_TITULO = ALTO - ALTO_FRANJA - 40
-
-        def _envolver_titulo(texto, fuente):
-            palabras = texto.split()
-            lineas, actual = [], []
-            for palabra in palabras:
-                prueba = " ".join(actual + [palabra])
-                if draw.textbbox((0, 0), prueba, font=fuente)[2] > MAX_ANCHO_TITULO and actual:
-                    lineas.append(actual)
-                    actual = [palabra]
-                else:
-                    actual.append(palabra)
-            if actual:
-                lineas.append(actual)
-            return lineas
-
-        def _dibujar_titulo_multilinea(texto, y_inicial, tamano_fuente, x_inicio, interlineado=1.08):
-            fuente = _fuente(tamano_fuente)
-            lineas = _envolver_titulo(texto, fuente)
-            alto_linea = int(tamano_fuente * interlineado)
-            y = y_inicial
-            for i, palabras_linea in enumerate(lineas):
-                es_ultima_linea_del_titulo = (i == len(lineas) - 1)
-                x = x_inicio
-                for j, palabra in enumerate(palabras_linea):
-                    es_ultima_palabra_global = es_ultima_linea_del_titulo and j == len(palabras_linea) - 1
-                    color = AMARILLO if es_ultima_palabra_global else BLANCO
-                    texto_palabra = palabra + (" " if j < len(palabras_linea) - 1 else "")
-                    for dx in (-3, 0, 3):
-                        for dy in (-3, 0, 3):
-                            if dx or dy:
-                                draw.text((x + dx, y + dy), texto_palabra, font=fuente, fill=(0, 0, 0, 255))
-                    draw.text((x, y), texto_palabra, font=fuente, fill=color)
-                    x += draw.textbbox((0, 0), texto_palabra, font=fuente)[2]
-                y += alto_linea
-            return y
-
-        # El texto ahora tiene 150-200 caracteres (antes eran ~70), asi que
-        # el tamano de fuente se elige dinamicamente probando de mayor a
-        # menor hasta que entre en el espacio disponible (arriba de la
-        # franja roja) sin salirse.
-        candidatos_tamano = [58, 52, 46, 40, 36, 32, 28, 25, 22]
-        tamano_elegido, alto_linea_elegido, lineas_elegidas = candidatos_tamano[-1], 30, []
-        for tamano in candidatos_tamano:
-            fuente_prueba = _fuente(tamano)
-            lineas_prueba = _envolver_titulo(titular, fuente_prueba)
-            alto_linea_prueba = int(tamano * 1.08)
-            if len(lineas_prueba) * alto_linea_prueba <= MAX_ALTO_TITULO:
-                tamano_elegido, alto_linea_elegido, lineas_elegidas = tamano, alto_linea_prueba, lineas_prueba
-                break
-        else:
-            tamano_elegido = candidatos_tamano[-1]
-
-        alto_total_titulo = len(lineas_elegidas or _envolver_titulo(titular, _fuente(tamano_elegido))) * alto_linea_elegido
-        y_inicial_titulo = max(30, (MAX_ALTO_TITULO - alto_total_titulo) // 2 + 20)
-
-        _dibujar_titulo_multilinea(titular, y_inicial=y_inicial_titulo, tamano_fuente=tamano_elegido, x_inicio=X_TITULO)
-
-        fuente_franja = _fuente(38)
-        ancho_frase = draw.textbbox((0, 0), franja_texto, font=fuente_franja)[2]
-        if ancho_frase > ANCHO - 48:
-            tamano = 38
-            while ancho_frase > ANCHO - 48 and tamano > 20:
-                tamano -= 2
-                fuente_franja = _fuente(tamano)
-                ancho_frase = draw.textbbox((0, 0), franja_texto, font=fuente_franja)[2]
-        x_frase = (ANCHO - ancho_frase) // 2
-        y_frase = ALTO - ALTO_FRANJA + (ALTO_FRANJA - fuente_franja.size) // 2 - 4
-        draw.text((x_frase, y_frase), franja_texto, font=fuente_franja, fill=BLANCO)
-
-        resultado = Image.alpha_composite(base.convert("RGBA"), overlay).convert("RGB")
-        resultado.save(ruta_salida)
-
-        if logger:
-            logger.info(f"Miniatura nanobanana-pro (fondo IA + Pillow) generada: {ruta_salida}")
-        return ruta_salida
-    except Exception as e:
-        if logger:
-            logger.warning(f"Fallo al componer la miniatura con Pillow: {e}")
-        return None
-    finally:
-        try:
-            if os.path.exists(ruta_fondo):
-                os.remove(ruta_fondo)
-        except Exception:
-            pass
-def _mf_buscar_fuente_condensada():
-    if not os.path.isdir(CARPETA_FUENTES):
-        return None
-    archivos = os.listdir(CARPETA_FUENTES)
-    if not archivos:
-        return None
-    for clave in ["black", "cond", "anton", "bebas", "impact", "bold"]:
-        for nombre in archivos:
-            if clave in nombre.lower():
-                return os.path.join(CARPETA_FUENTES, nombre)
-    return os.path.join(CARPETA_FUENTES, archivos[0])
-
-
-def _mf_envolver(texto, max_chars):
-    palabras = texto.split()
-    lineas, actual, largo = [], [], 0
-    for palabra in palabras:
-        if actual and largo + len(palabra) + 1 > max_chars:
-            lineas.append(" ".join(actual)); actual, largo = [], 0
-        actual.append(palabra); largo += len(palabra) + 1
-    if actual:
-        lineas.append(" ".join(actual))
-    return lineas
-
-
-def _mf_max_chars(fontsize, x_inicio, ancho_canvas, margen_derecho=25, factor=0.56):
-    ancho_disponible = ancho_canvas - x_inicio - margen_derecho
-    return max(int(ancho_disponible / (fontsize * factor)), 5)
-
-
-def _mf_armar_lineas_titulo(texto_titulo, x_titulo, ancho_canvas):
-    candidatos = [(72, 90), (64, 80), (56, 70), (48, 60), (41, 51), (34, 43), (28, 35), (24, 30)]
-    for tamano, alto_linea in candidatos:
-        max_chars = _mf_max_chars(tamano, x_titulo, ancho_canvas)
-        lineas = _mf_envolver(texto_titulo, max_chars)
-        if len(lineas) <= 5:
-            return lineas[:5], tamano, alto_linea
-    tamano, alto_linea = candidatos[-1]
-    max_chars = _mf_max_chars(tamano, x_titulo, ancho_canvas)
-    return _mf_envolver(texto_titulo, max_chars)[:5], tamano, alto_linea
-
-
-def _mf_escapar(texto):
-    return texto.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-
-
-def generar_miniatura_estilo_foto(titulo, subtitulo, ruta_fondo, ruta_logo, ruta_salida, logger=None):
-    """Compone la miniatura final: foto de fondo + logo HSF + titulo
-    (fuente condensada/Anton, ultima linea amarilla) + cartel rojo con
-    el subtitulo (tambien envuelto en 1-2 lineas, nunca se sale del
-    cuadro). Todo el texto lo dibuja ffmpeg, nunca una IA."""
-    ancho_mini, alto_mini = 1280, 720
-    ruta_fuente = _mf_buscar_fuente_condensada()
-    fontfile = f":fontfile='{ruta_fuente}'" if ruta_fuente else ""
-
-    x_titulo = 570
-    texto_titulo = titulo.strip().upper()
-    lineas, tamano_titulo, alto_linea = _mf_armar_lineas_titulo(texto_titulo, x_titulo, ancho_mini)
-    y_titulo_inicio = 210 - max(0, len(lineas) - 3) * (alto_linea // 2)
-
-    dibujo_titulo = []
-    for i, linea in enumerate(lineas):
-        color = "yellow" if i == len(lineas) - 1 else "white"
-        y_pos = y_titulo_inicio + i * alto_linea
-        dibujo_titulo.append(
-            f"drawtext=text='{_mf_escapar(linea)}'{fontfile}:fontcolor={color}:fontsize={tamano_titulo}:"
-            f"borderw=3:bordercolor=black:x={x_titulo}:y={y_pos}"
-        )
-
-    texto_subtitulo = subtitulo.strip().upper()
-    ancho_max_cartel = ancho_mini - x_titulo - 25
-    tamano_subtitulo = 30
-    lineas_subtitulo = _mf_envolver(
-        texto_subtitulo, _mf_max_chars(tamano_subtitulo, 0, ancho_max_cartel, margen_derecho=40)
-    )
-    while len(lineas_subtitulo) > 2 and tamano_subtitulo > 18:
-        tamano_subtitulo -= 2
-        lineas_subtitulo = _mf_envolver(
-            texto_subtitulo, _mf_max_chars(tamano_subtitulo, 0, ancho_max_cartel, margen_derecho=40)
-        )
-    lineas_subtitulo = lineas_subtitulo[:2]
-
-    alto_linea_subtitulo = tamano_subtitulo + 14
-    alto_cartel = alto_linea_subtitulo * len(lineas_subtitulo) + 20
-    ancho_texto_max = max((len(l) for l in lineas_subtitulo), default=0)
-    ancho_cartel = int(min(ancho_max_cartel, max(220, ancho_texto_max * (tamano_subtitulo * 0.62) + 40)))
-    y_cartel = y_titulo_inicio + len(lineas) * alto_linea + 30
-
-    dibujos_texto_subtitulo = []
-    for j, linea_sub in enumerate(lineas_subtitulo):
-        y_linea = y_cartel + 15 + j * alto_linea_subtitulo
-        dibujos_texto_subtitulo.append(
-            f"drawtext=text='{_mf_escapar(linea_sub)}'{fontfile}:fontcolor=white:fontsize={tamano_subtitulo}:"
-            f"borderw=0:x={x_titulo + 20}:y={y_linea}"
-        )
-    dibujo_cartel = f"drawbox=x={x_titulo}:y={y_cartel}:w={ancho_cartel}:h={alto_cartel}:color=red@1.0:t=fill"
-    if dibujos_texto_subtitulo:
-        dibujo_cartel += "," + ",".join(dibujos_texto_subtitulo)
-
-    x_logo, y_logo, tamano_logo = 30, 25, 90
-    x_nombre, y_nombre = x_logo + tamano_logo + 15, y_logo + (tamano_logo // 2) - 20
-    dibujo_nombre = (
-        f"drawtext=text='HISTORIA SIN FILTRO'{fontfile}:fontcolor=white:fontsize=34:"
-        f"borderw=2:bordercolor=black:x={x_nombre}:y={y_nombre}"
-    )
-
-    cadena_texto = ",".join(dibujo_titulo) + f",{dibujo_cartel},{dibujo_nombre}"
-    filtro_complejo = (
-        f"[0:v]scale={ancho_mini}:{alto_mini}[fondo];"
-        f"[1:v]scale={tamano_logo}:{tamano_logo}[logo];"
-        f"[fondo][logo]overlay={x_logo}:{y_logo}[conlogo];"
-        f"[conlogo]{cadena_texto}[out]"
-    )
-    cmd = ["ffmpeg", "-y", "-i", ruta_fondo, "-i", ruta_logo,
-           "-filter_complex", filtro_complejo, "-map", "[out]", "-frames:v", "1", ruta_salida]
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
-    if resultado.returncode != 0 or not os.path.exists(ruta_salida):
-        if logger:
-            logger.warning(f"No se pudo componer la miniatura estilo foto: {resultado.stderr[-800:]}")
-        return None
-    if logger:
-        logger.info(f"Miniatura estilo foto generada: {ruta_salida}")
-    return ruta_salida
-
-
-def generar_miniatura_nueva(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None):
-    """Wrapper: genera la foto de fondo con Pollinations y arma la
-    miniatura estilo foto. Si la foto falla, usa un frame del video como
-    respaldo. Devuelve la ruta si salio bien, o None (para que la cadena
-    de miniaturas en _subir_ultimo_resultado_a_youtube caiga al siguiente
-    metodo)."""
-    ruta_fondo = ruta_salida + ".fondo.png"
-    ruta_fondo_generada = generar_ilustracion_pollinations(resumen_texto, ruta_fondo, logger=logger)
-
-    if not ruta_fondo_generada and ruta_video_fondo and os.path.exists(ruta_video_fondo):
-        ruta_fondo_generada = ruta_salida + ".fondo_frame.jpg"
-        try:
-            duracion = obtener_duracion_audio(ruta_video_fondo)
-        except Exception:
-            duracion = 10.0
-        instante = min(max(2.0, duracion * 0.15), duracion - 1 if duracion > 1 else 0)
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(instante), "-i", ruta_video_fondo,
-             "-vf", "scale=1280:720", "-frames:v", "1", ruta_fondo_generada],
-            capture_output=True,
-        )
-        if not os.path.exists(ruta_fondo_generada):
-            ruta_fondo_generada = None
-
-    if not ruta_fondo_generada:
-        if logger:
-            logger.warning("generar_miniatura_nueva: no hay foto de fondo ni frame de respaldo.")
-        return None
-
-    subtitulo = _generar_pregunta_miniatura(resumen_texto, logger=logger)
-    if not subtitulo or not subtitulo.strip():
-        subtitulo = resumen_texto.strip()[:90]
-    ruta_logo = os.path.join(CARPETA_BASE, "assets", "logo_hsf.png")
-
-    return generar_miniatura_estilo_foto(
-        titulo_miniatura, subtitulo, ruta_fondo_generada, ruta_logo, ruta_salida, logger=logger,
-    )
