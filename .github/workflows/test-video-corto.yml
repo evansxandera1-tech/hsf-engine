@@ -55,8 +55,21 @@ jobs:
           logger.addHandler(logging.StreamHandler())
           logger.setLevel(logging.INFO)
 
-          guion, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
-          if not guion:
+          # ---- Elegir historia + recortar a ~2 min (solo prueba, SIN Gemini) ----
+          # Antes se le pedia a Gemini que "resumiera" la historia completa,
+          # pero eso obligaba a Gemini a reescribir/parafrasear el contenido
+          # explicito de la historia, y varias veces la bloqueaba
+          # (blockReason=PROHIBITED_CONTENT), abortando todo el video.
+          # Ahora el guion se corta directo por cantidad de palabras (nada
+          # de IA de por medio, no hay nada que pueda bloquear) y el
+          # respaldo de ffmpeg mas abajo recorta el video si aun asi se
+          # pasa de 2 min. El titulo y la miniatura siguen usando la
+          # historia COMPLETA (guion_completo), no el recorte, para no
+          # perder contexto ni el detalle mas escandaloso de la historia.
+          PALABRAS_OBJETIVO_CORTO = 300
+
+          guion_completo, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
+          if not guion_completo:
               raise RuntimeError("No se encontro ningun texto listo en textos_listos_gdrive.")
 
           # Titulo real (mismo criterio que usa _pipeline_video_automatico):
@@ -64,46 +77,9 @@ jobs:
           # en ningun lado y siempre daba el generico "Video de prueba (2 min)".
           titulo_resumen = os.path.splitext(nombre_archivo_texto)[0].replace("_", " ").strip()
 
-          # ---- Resumir la historia completa a ~2 minutos narrados (solo prueba) ----
-          # Usa _llamar_gemini (con reintentos/backoff ante 429/503/timeouts,
-          # la misma funcion que ya usa produccion) en vez de un requests.post
-          # suelto sin reintentos: eso era lo que fallaba intermitente.
-          # Si el resumen no se puede conseguir, se ABORTA (no se cae en
-          # silencio al guion completo): un "test de 2 min" que termina
-          # procesando la historia entera no sirve como prueba y obliga a
-          # cancelar el workflow a mano.
-          guion_original = guion
-          resumen_ok = False
-          if GEMINI_API_KEY:
-              prompt_resumen = (
-                  "Resumi la siguiente historia real narrada en primera persona, "
-                  "manteniendo el mismo estilo, tono y persona narrativa (no cambies "
-                  "'yo' por 'ella/el'), conservando el inicio, el conflicto principal, "
-                  "el giro/revelacion mas importante y el cierre. El resultado debe "
-                  "poder narrarse en voz alta en aproximadamente 2 minutos (apunta a "
-                  "unas 280-320 palabras). No agregues comentarios ni titulos, "
-                  "devolve SOLO el texto resumido de la historia.\n\n"
-                  f"HISTORIA ORIGINAL:\n{guion_original.strip()[:6000]}"
-              )
-              guion_resumido = _llamar_gemini(
-                  prompt_resumen, timeout=60, intentos_maximos=4,
-                  logger=logger, etiqueta="Resumen 2 min",
-              )
-              if guion_resumido:
-                  guion = guion_resumido
-                  resumen_ok = True
-                  print(f"Guion resumido: {len(guion_original.split())} palabras -> {len(guion.split())} palabras", flush=True)
-              else:
-                  print("Gemini no devolvio resumen tras varios reintentos.", flush=True)
-          else:
-              print("GEMINI_API_KEY vacia.", flush=True)
-
-          if not resumen_ok:
-              raise RuntimeError(
-                  "No se pudo resumir el guion a ~2 min (GEMINI_API_KEY vacia o "
-                  "Gemini fallo tras varios reintentos). Se aborta para no "
-                  "terminar procesando el texto completo en esta prueba corta."
-              )
+          palabras = guion_completo.split()
+          guion = " ".join(palabras[:PALABRAS_OBJETIVO_CORTO])
+          print(f"Guion recortado (sin IA, solo prueba corta): {len(palabras)} palabras -> {len(guion.split())} palabras", flush=True)
 
           ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
           if not ruta_gameplay:
@@ -163,7 +139,7 @@ jobs:
           hsf_engine._ULTIMO_RESULTADO_AUTOMATICO = {
               "ruta_video": ruta_video_absoluta,
               "titulo_resumen": titulo_resumen,
-              "guion": guion,
+              "guion": guion_completo,
               "subreddits": [],
               "cantidad_historias": 1,
               "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
