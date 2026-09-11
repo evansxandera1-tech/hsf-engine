@@ -412,7 +412,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "6.1"
+VERSION_SCRIPT = "6.2"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -2363,23 +2363,21 @@ Título original: "{titulo}"
 Devolvé ÚNICAMENTE el título final, sin comillas, sin explicaciones."""
 
 
-PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA frase corta para el cartel de una miniatura de YouTube, pensada para generar MORBO puro: la persona tiene que sentir que si no hace clic se pierde algo grande.
+PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA frase corta para el cartel de una miniatura de YouTube: morbo DIRECTO y explícito, no una insinuación vaga.
 
 Reglas de contenido (esto es lo más importante):
-- Insinuá que hay algo oculto, un secreto, una traición o un giro, SIN contar qué es. La frase tiene que dejar un vacío que solo se llena viendo el video.
-- Usá el efecto "hasta que...", "hasta que descubrí...", "nadie sabía que...", "lo que encontré/hizo después...", "lo que pasó a continuación...", como gancho de intriga.
-- PROHIBIDO sonar plana o descriptiva tipo "mi hermana me hizo esto" o "mi hermana la muy descarada". Nada de simplemente nombrar el hecho: hay que insinuar la consecuencia o el giro sin decirlo.
-- Mejor si apunta a la reacción/consecuencia (el golpe final, la revancha, el hallazgo) más que al hecho en sí.
-- Tono provocador, primera persona o afirmación directa (puede ser pregunta o no).
-- Sin inventar datos que no estén en el resumen.
+- Si el resumen tiene una traición, infidelidad o vínculo prohibido, nombrá explícitamente QUIÉN hizo QUÉ con QUIÉN (ej: "me acosté con la hija de mi mejor amiga", "mi esposo me engañaba con mi propio padre"). No lo diluyas en algo genérico ni lo dejes oculto.
+- PROHIBIDO el estilo "hasta que...", "nadie sabía que...", "lo que descubrí..." o cualquier insinuación que oculte el hecho: acá se dice el hecho de frente, sin vueltas.
+- PROHIBIDO sonar plana o descriptiva sin impacto tipo "mi hermana me hizo esto": tiene que doler/escandalizar apenas se lee.
+- Tono provocador, primera persona o afirmación directa.
+- Sin inventar datos que no estén en el resumen: si no da ese detalle explícito, usá el hecho más escandaloso que sí da, de forma directa.
 - Sin emojis, sin comillas.
 - Máximo 12 palabras.
 
 Ejemplos del estilo que quiero (no copiar literal, son solo referencia de tono):
-- "PENSÉ QUE ERA MI ALIADA HASTA QUE VI LO QUE HIZO"
-- "NADIE SOSPECHÓ NADA HASTA QUE ABRÍ ESA PUERTA"
-- "LO QUE ENCONTRÉ ESA NOCHE CAMBIÓ TODO PARA SIEMPRE"
-- "CREÍ QUE HABÍA GANADO HASTA QUE SONÓ MI TELÉFONO"
+- "ME ACOSTÉ CON LA HIJA DE MI MEJOR AMIGA"
+- "MI ESPOSO ME ENGAÑABA CON MI PROPIO PADRE"
+- "MI HERMANO ROMPIÓ MI TESIS Y MIS PADRES SE RIERON"
 
 Resumen: "{resumen}"
 
