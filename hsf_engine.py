@@ -605,6 +605,9 @@ FUENTES_DISPONIBLES = {
     "Cormorant Garamond": "https://github.com/google/fonts/raw/main/ofl/cormorantgaramond/CormorantGaramond-Bold.ttf",
     "EB Garamond": "https://github.com/google/fonts/raw/main/ofl/ebgaramond/static/EBGaramond-Bold.ttf",
     "Lora": "https://github.com/google/fonts/raw/main/ofl/lora/static/Lora-Bold.ttf",
+    # Fuente redondeada tipo "burbuja", usada solo para el titular de la
+    # miniatura (más visual/infantil que las serias de arriba).
+    "Chewy": "https://github.com/google/fonts/raw/main/ofl/chewy/Chewy-Regular.ttf",
 }
 # Montserrat SemiBold como nueva fuente por defecto: para historias de Reddit
 # en horizontal (1920x1080) se lee mejor una tipografía limpia tipo sans-serif
@@ -2359,13 +2362,23 @@ Título original: "{titulo}"
 Devolvé ÚNICAMENTE el título final, sin comillas, sin explicaciones."""
 
 
-PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA frase corta, polémica y con gancho de clickbait en español, del tipo que se usa en el cartel rojo de una miniatura de YouTube — algo que genere debate y ganas de opinar en los comentarios (ej: "¿SOY LA MALA POR ESTO?", "LA VERDAD QUE NADIE QUISO CREERME", "ESTO DESTRUYÓ A TODA MI FAMILIA").
+PROMPT_PREGUNTA_MINIATURA = """A partir de este resumen de una historia real narrada en primera persona, escribí UNA frase corta para el cartel de una miniatura de YouTube, pensada para generar MORBO puro: la persona tiene que sentir que si no hace clic se pierde algo grande.
 
-Reglas:
-- Máximo 10 palabras.
-- Tono provocador/polémico, primera persona o afirmación directa (puede ser pregunta o no).
+Reglas de contenido (esto es lo más importante):
+- Insinuá que hay algo oculto, un secreto, una traición o un giro, SIN contar qué es. La frase tiene que dejar un vacío que solo se llena viendo el video.
+- Usá el efecto "hasta que...", "hasta que descubrí...", "nadie sabía que...", "lo que encontré/hizo después...", "lo que pasó a continuación...", como gancho de intriga.
+- PROHIBIDO sonar plana o descriptiva tipo "mi hermana me hizo esto" o "mi hermana la muy descarada". Nada de simplemente nombrar el hecho: hay que insinuar la consecuencia o el giro sin decirlo.
+- Mejor si apunta a la reacción/consecuencia (el golpe final, la revancha, el hallazgo) más que al hecho en sí.
+- Tono provocador, primera persona o afirmación directa (puede ser pregunta o no).
 - Sin inventar datos que no estén en el resumen.
 - Sin emojis, sin comillas.
+- Máximo 12 palabras.
+
+Ejemplos del estilo que quiero (no copiar literal, son solo referencia de tono):
+- "PENSÉ QUE ERA MI ALIADA HASTA QUE VI LO QUE HIZO"
+- "NADIE SOSPECHÓ NADA HASTA QUE ABRÍ ESA PUERTA"
+- "LO QUE ENCONTRÉ ESA NOCHE CAMBIÓ TODO PARA SIEMPRE"
+- "CREÍ QUE HABÍA GANADO HASTA QUE SONÓ MI TELÉFONO"
 
 Resumen: "{resumen}"
 
@@ -2667,7 +2680,7 @@ def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, lo
     Drive (gdrive:miniatura/miniatura_plantilla1.png). Ya no genera nada
     con IA (Pollinations/seedream): siempre la misma plantilla, solo
     cambia el texto."""
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
     import textwrap
 
     ruta_plantilla = _obtener_plantilla_miniatura_desde_drive(logger=logger)
@@ -2694,7 +2707,7 @@ def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, lo
     max_w = text_x1 - text_x0
     max_h = text_y1 - text_y0
 
-    nombre_fuente_ok = asegurar_fuente(FUENTE_POR_DEFECTO) or FUENTE_POR_DEFECTO
+    nombre_fuente_ok = asegurar_fuente("Chewy") or FUENTE_POR_DEFECTO
     ruta_fuente = os.path.join(CARPETA_FUENTES, FUENTES_DISPONIBLES[nombre_fuente_ok].split("/")[-1])
     if not os.path.exists(ruta_fuente):
         ruta_fuente = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -2724,11 +2737,45 @@ def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, lo
     line_spacing = 1.25
     total_h = sum(h * line_spacing for h in line_heights)
     cur_y = text_y0 + (max_h - total_h) / 2
+
+    # Degradado rosa-violeta (a tono con los colores de la plantilla) en vez
+    # de negro plano, con una sombra suave debajo para que resalte sobre la
+    # tarjeta blanca.
+    color_rosa = (255, 45, 149)     # rosa fuerte
+    color_violeta = (123, 46, 207)  # violeta
+
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
         lw = bbox[2] - bbox[0]
         cx = text_x0 + (max_w - lw) / 2
-        draw.text((cx, cur_y), line, font=font, fill=(20, 20, 20))
+        y_pos = int(cur_y)
+
+        # Sombra suave (leve desplazamiento + blur) para dar profundidad.
+        pad = 20
+        shadow = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow)
+        sd.text((pad - bbox[0], pad - bbox[1]), line, font=font, fill=(123, 46, 207, 140))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(6))
+        img.paste(shadow, (int(cx) - pad, y_pos - pad + 4), shadow)
+        draw = ImageDraw.Draw(img)
+
+        # Máscara del texto (blanco = letra) para rellenar con degradado.
+        mask = Image.new("L", (lw, lh), 0)
+        md = ImageDraw.Draw(mask)
+        md.text((-bbox[0], -bbox[1]), line, font=font, fill=255)
+
+        # Degradado horizontal rosa -> violeta del tamaño de la línea.
+        gradiente = Image.new("RGB", (lw, lh), color_rosa)
+        gd = ImageDraw.Draw(gradiente)
+        for gx in range(lw):
+            t = gx / max(1, lw - 1)
+            r = int(color_rosa[0] + (color_violeta[0] - color_rosa[0]) * t)
+            g = int(color_rosa[1] + (color_violeta[1] - color_rosa[1]) * t)
+            b = int(color_rosa[2] + (color_violeta[2] - color_rosa[2]) * t)
+            gd.line([(gx, 0), (gx, lh)], fill=(r, g, b))
+
+        img.paste(gradiente, (int(cx), y_pos), mask)
+        draw = ImageDraw.Draw(img)
         cur_y += lh * line_spacing
 
     img = img.resize((RESOLUCION_ANCHO, RESOLUCION_ALTO), Image.LANCZOS)
@@ -3043,7 +3090,69 @@ def agregar_intro_resumen(ruta_video, ruta_plantilla, resumen_texto, ruta_salida
 
 HASHTAGS_FIJOS = ["#historiasreales", "#confesiones", "#reddit", "#storytime", "#historiassinfiltro"]
 
-def _armar_descripcion_youtube(subreddits, cantidad_historias):
+PROMPT_TAGS_SEO = """Actuá como una herramienta de SEO para YouTube (estilo vidIQ/TubeBuddy). A partir del título y el resumen de esta historia real, generá palabras clave y frases que la GENTE REALMENTE ESCRIBE en el buscador de YouTube para encontrar este tipo de contenido (no inventes términos raros, pensá en búsquedas reales).
+
+Mezclá:
+- Términos amplios de la categoría (ej: historias de reddit, confesiones anonimas, historias reales de infidelidad, relatos de traicion familiar)
+- Términos específicos del tema puntual de ESTA historia (ej: si es sobre una herencia robada por un hermano: pelea por herencia familiar, hermano roba herencia, herencia y traicion)
+- Variantes largas tipo pregunta (ej: que hacer si mi familia me traiciona)
+
+Título: "{titulo}"
+Resumen: "{resumen}"
+
+Devolvé SOLO una lista de 15 a 20 términos separados por coma, en español, minúsculas, sin numerar, sin explicaciones, sin hashtags (#)."""
+
+PROMPT_HASHTAGS_SEO = """A partir del título y resumen de esta historia real, elegí 4 hashtags para YouTube: 2 amplios de la categoría (historias/confesiones/reddit) y 2 específicos del tema puntual de esta historia en particular (el conflicto, la relación entre personas, el giro).
+
+Título: "{titulo}"
+Resumen: "{resumen}"
+
+Devolvé SOLO los 4 hashtags separados por espacio, formato #palabrasjuntas en minúscula, sin explicaciones."""
+
+
+def _generar_tags_seo_gemini(titulo, resumen_texto, logger=None):
+    """Genera tags de búsqueda real (estilo vidIQ) con Gemini a partir del
+    título y resumen de la historia. Si Gemini falla, devuelve lista vacía
+    (el llamador cae a los tags fijos de siempre)."""
+    if not GEMINI_API_KEY:
+        if logger:
+            logger.warning("Tags SEO: sin GEMINI_API_KEY, se usan tags de respaldo (palabras del título).")
+        return []
+    prompt = PROMPT_TAGS_SEO.format(titulo=titulo, resumen=resumen_texto[:600])
+    resultado_gemini = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="tags SEO")
+    if not resultado_gemini:
+        if logger:
+            logger.warning("Tags SEO: Gemini no respondió, se usan tags de respaldo (palabras del título).")
+        return []
+    tags = [t.strip().lower() for t in resultado_gemini.split(",") if t.strip()]
+    if logger:
+        logger.info(f"Tags SEO (Gemini) generados: {len(tags)} términos -> {tags}")
+    return tags
+
+
+def _generar_hashtags_seo_gemini(titulo, resumen_texto, logger=None):
+    """Genera 4 hashtags (2 amplios + 2 específicos del tema) con Gemini.
+    Si falla, devuelve None (el llamador cae a HASHTAGS_FIJOS de siempre)."""
+    if not GEMINI_API_KEY:
+        if logger:
+            logger.warning("Hashtags SEO: sin GEMINI_API_KEY, se usan los hashtags fijos.")
+        return None
+    prompt = PROMPT_HASHTAGS_SEO.format(titulo=titulo, resumen=resumen_texto[:600])
+    resultado_gemini = _llamar_gemini(prompt, timeout=30, logger=logger, etiqueta="hashtags SEO")
+    if not resultado_gemini:
+        if logger:
+            logger.warning("Hashtags SEO: Gemini no respondió, se usan los hashtags fijos.")
+        return None
+    hashtags = [h.strip() for h in resultado_gemini.split() if h.strip().startswith("#")]
+    if not hashtags and logger:
+        logger.warning("Hashtags SEO: respuesta de Gemini sin hashtags válidos, se usan los hashtags fijos.")
+    elif hashtags and logger:
+        logger.info(f"Hashtags SEO (Gemini) generados: {hashtags}")
+    return hashtags or None
+
+
+def _armar_descripcion_youtube(subreddits, cantidad_historias, hashtags=None):
+    hashtags_finales = hashtags if hashtags else HASHTAGS_FIJOS
     partes = [
         "Una historia real que te va a dejar pensando. Confesiones, secretos de familia y relatos que la gente compartió de forma anónima en internet.",
         "",
@@ -3055,26 +3164,35 @@ def _armar_descripcion_youtube(subreddits, cantidad_historias):
         "",
         "🔔 Suscribite para más historias cada semana.",
         "",
-        " ".join(HASHTAGS_FIJOS),
+        " ".join(hashtags_finales),
     ]
     return "\n".join(partes)
 
 
-def _armar_tags_youtube(titulo_resumen):
-    """Arma la lista de etiquetas (tags) del video: algunas fijas del canal
-    más algunas palabras sueltas sacadas del título de la historia, para
-    ayudar al algoritmo de YouTube a entender el contenido."""
+def _armar_tags_youtube(titulo_resumen, resumen_texto=None, logger=None):
+    """Arma la lista de etiquetas (tags) del video: tags fijos del canal +
+    términos de búsqueda real generados con Gemini (estilo vidIQ) a partir
+    del título y el resumen. Si Gemini falla, cae a palabras sueltas del
+    título (comportamiento viejo) para no dejar el video sin tags."""
     tags_fijos = [
         "historias reales", "historias de reddit", "confesiones",
         "historias sin filtro", "relatos reales", "storytime en español",
         "historias narradas", "secretos de familia",
     ]
-    palabras_titulo = [
-        p.strip(".,!?¿¡\"'").lower()
-        for p in titulo_resumen.split()
-        if len(p) > 3
-    ]
-    tags = tags_fijos + palabras_titulo
+
+    tags_seo = _generar_tags_seo_gemini(titulo_resumen, resumen_texto or titulo_resumen, logger=logger)
+    if tags_seo:
+        tags = tags_fijos + tags_seo
+    else:
+        if logger:
+            logger.warning("Tags YouTube: usando respaldo de palabras sueltas del título (sin tags SEO de Gemini).")
+        palabras_titulo = [
+            p.strip(".,!?¿¡\"'").lower()
+            for p in titulo_resumen.split()
+            if len(p) > 3
+        ]
+        tags = tags_fijos + palabras_titulo
+
     # YouTube limita el total de tags a 500 caracteres sumados; se recorta
     # por las dudas para no pasarse.
     tags_final, largo = [], 0
@@ -3117,14 +3235,15 @@ def _subir_ultimo_resultado_a_youtube(logger):
     youtube = build("youtube", "v3", credentials=credenciales)
 
     titulo = _armar_titulo_youtube(resultado["titulo_resumen"], resultado["subreddits"])
-    descripcion = _armar_descripcion_youtube(resultado["subreddits"], resultado["cantidad_historias"])
+    hashtags_seo = _generar_hashtags_seo_gemini(resultado["titulo_resumen"], resultado.get("guion") or resultado["titulo_resumen"], logger=logger)
+    descripcion = _armar_descripcion_youtube(resultado["subreddits"], resultado["cantidad_historias"], hashtags=hashtags_seo)
     logger.info(f"Subiendo a YouTube: {titulo}")
 
     cuerpo = {
         "snippet": {
             "title": titulo,
             "description": descripcion,
-            "tags": _armar_tags_youtube(resultado["titulo_resumen"]),
+            "tags": _armar_tags_youtube(resultado["titulo_resumen"], resultado.get("guion"), logger=logger),
             "categoryId": "24",  # Entretenimiento
         },
         "status": {
