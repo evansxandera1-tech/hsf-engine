@@ -423,7 +423,7 @@ PREFIJO_LOG = "hsf_log_"
 # entero siguiente (x.9 -> (x+1).0), no sigue a x.10, x.11, etc.
 # Story Engine arranca en 1.0: es un proyecto nuevo a partir de Gen HSF V5.5,
 # no continúa su numeración.
-VERSION_SCRIPT = "6.4"
+VERSION_SCRIPT = "6.5"
 
 # Velocidad de los efectos de video animados (ceniza y vela). Solo estos dos
 # tienen una noción de "velocidad" porque son los únicos con movimiento en
@@ -2108,27 +2108,56 @@ def _pipeline_test_chatterbox(logger, ruta_log, segundos_test=120):
 
 
 def _obtener_plantilla_miniatura_desde_drive(logger=None):
-    """Descarga (una sola vez, se cachea localmente) la plantilla fija de
-    miniatura desde gdrive:miniatura/miniatura_plantilla1.png. Devuelve la
-    ruta local, o None si no existe/falla la descarga (en ese caso el
-    llamador cae al método viejo: frame del video)."""
+    """Descarga (cacheando localmente cada variante) una plantilla de
+    miniatura elegida AL AZAR entre las miniatura_plantillaN.png que
+    existan en gdrive:miniatura. Devuelve la ruta local, o None si no
+    existe/falla la descarga (en ese caso el llamador cae al método
+    viejo: frame del video)."""
     os.makedirs(CARPETA_MINIATURA_LOCAL, exist_ok=True)
-    ruta_local = os.path.join(CARPETA_MINIATURA_LOCAL, "miniatura_plantilla1.png")
-    if os.path.exists(ruta_local):
-        return ruta_local
+
     try:
         resultado = subprocess.run(
-            ["rclone", "copyto", f"{RCLONE_REMOTE_MINIATURA}/miniatura_plantilla1.png", ruta_local],
-            capture_output=True, text=True, timeout=120,
+            ["rclone", "lsf", RCLONE_REMOTE_MINIATURA],
+            capture_output=True, text=True, timeout=60,
         )
-        if resultado.returncode != 0 or not os.path.exists(ruta_local):
+        if resultado.returncode != 0:
             if logger:
-                logger.warning(f"No se pudo bajar la plantilla de miniatura desde Drive: {resultado.stderr[:300]}")
+                logger.warning(f"No se pudo listar la carpeta de miniaturas en Drive: {resultado.stderr[:300]}")
             return None
+        nombres = [
+            n.strip() for n in resultado.stdout.splitlines()
+            if re.match(r"^miniatura_plantilla\d+\.png$", n.strip())
+        ]
     except Exception as e:
         if logger:
-            logger.warning(f"Error bajando plantilla de miniatura: {e}")
+            logger.warning(f"Error listando plantillas de miniatura: {e}")
         return None
+
+    if not nombres:
+        if logger:
+            logger.warning("No se encontraron plantillas miniatura_plantillaN.png en Drive.")
+        return None
+
+    nombre_elegido = random.choice(nombres)
+    ruta_local = os.path.join(CARPETA_MINIATURA_LOCAL, nombre_elegido)
+
+    if not os.path.exists(ruta_local):
+        try:
+            resultado = subprocess.run(
+                ["rclone", "copyto", f"{RCLONE_REMOTE_MINIATURA}/{nombre_elegido}", ruta_local],
+                capture_output=True, text=True, timeout=120,
+            )
+            if resultado.returncode != 0 or not os.path.exists(ruta_local):
+                if logger:
+                    logger.warning(f"No se pudo bajar la plantilla de miniatura desde Drive: {resultado.stderr[:300]}")
+                return None
+        except Exception as e:
+            if logger:
+                logger.warning(f"Error bajando plantilla de miniatura: {e}")
+            return None
+
+    if logger:
+        logger.info(f"Plantilla de miniatura elegida al azar: {nombre_elegido}")
     return ruta_local
 
 
