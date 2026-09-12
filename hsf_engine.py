@@ -713,8 +713,6 @@ import requests
 
 # ===================== Voz y Stock =====================
 
-VOZ_NARRADOR = "es-PE-AlexNeural"
-
 # Voz para el audio en inglés adaptado (v3.4). Pitch y velocidad quedan
 # fijos (no editables desde la interfaz por ahora, a diferencia de la voz
 # en español que sí tiene sliders).
@@ -753,30 +751,12 @@ def traducir_texto_deepl(texto, idioma_destino, logger=None):
         return texto
 
 
-TONO = "-10Hz"
-VELOCIDAD = "+5%"
-
-# Velocidad y tono de voz ahora se ajustan con una barra deslizante (no con
-# opciones predefinidas). El valor por defecto de cada barra coincide con
-# TONO/VELOCIDAD de arriba, así que si no se toca nada el resultado es
-# idéntico al de siempre. Los límites evitan que edge_tts reciba un valor
-# absurdo si algo llega mal formado desde el formulario.
-VELOCIDAD_VOZ_MIN, VELOCIDAD_VOZ_MAX = -50, 50
-TONO_VOZ_MIN, TONO_VOZ_MAX = -50, 50
+# velocidad_voz/tono_voz quedan como parámetros de procesar_todo solo por
+# compatibilidad con los llamadores existentes: desde que se eliminó
+# edge_tts ya no se usan para nada (la narración es siempre el audio de
+# Chatterbox, que trae su propia velocidad/tono ya fijados).
 VELOCIDAD_VOZ_POR_DEFECTO = 5
 TONO_VOZ_POR_DEFECTO = -5
-
-
-def _formatear_ajuste_voz(valor, sufijo, por_defecto, minimo, maximo):
-    """Convierte el número que manda la barra deslizante (ej. -10, 25) al
-    formato que espera edge_tts (ej. '-10%', '+25Hz'), recortando a los
-    límites permitidos si el valor es inválido o se pasa de rango."""
-    try:
-        v = int(float(valor))
-    except (TypeError, ValueError):
-        v = por_defecto
-    v = max(minimo, min(maximo, v))
-    return f"{v:+d}{sufijo}"
 
 
 def _lista_claves(var_base, respaldos_fijos):
@@ -861,370 +841,12 @@ def obtener_imagen_stock(indice, usadas, logger=None):
 # ============================================================
 import os
 import re
-import asyncio
 import subprocess
 
-import edge_tts
-
-
-# ===================== Auto-actualización de edge-tts =====================
-# La causa real detrás del error "NoAudioReceived"/audio vacío-dañado que
-# venía dando edge_tts (confirmado contra los issues del repo oficial
-# rany2/edge-tts) es que Microsoft cambia seguido detalles internos del
-# servicio, y una versión vieja de la librería deja de "calzar" con eso:
-# la conexión responde pero sin audio real, y ni siquiera reintentar
-# soluciona nada si el paquete sigue desactualizado. Estas dos funciones
-# atacan esa causa en vez de solo reintentar a ciegas.
-_EDGE_TTS_YA_CHEQUEADO = False
-
-
-def _version_instalada_edge_tts():
-    try:
-        import importlib.metadata
-        return importlib.metadata.version("edge-tts")
-    except Exception:
-        return None
-
-
-def _version_mas_nueva_edge_tts(timeout=6):
-    """Consulta la API pública de PyPI (sin necesitar pip) para saber la
-    última versión publicada de edge-tts. Devuelve None si no hay red o
-    falla la consulta, sin cortar nada más del programa."""
-    try:
-        resp = requests.get("https://pypi.org/pypi/edge-tts/json", timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()["info"]["version"]
-    except Exception:
-        return None
-
-
-def actualizar_edge_tts_si_hace_falta(logger=None, forzar=False):
-    """Compara versión instalada vs. la última de PyPI y, si hay una más
-    nueva (o si 'forzar' es True, para el reintento de emergencia), corre
-    'pip install --upgrade edge-tts' en un subproceso. No bloquea el
-    arranque del servidor si algo falla (sin red, pip roto, etc.): solo
-    queda un aviso en el log y el programa sigue con la versión que ya
-    tenía instalada."""
-    global _EDGE_TTS_YA_CHEQUEADO
-    if _EDGE_TTS_YA_CHEQUEADO and not forzar:
-        return
-    _EDGE_TTS_YA_CHEQUEADO = True
-    try:
-        instalada = _version_instalada_edge_tts()
-        ultima = _version_mas_nueva_edge_tts()
-        if not ultima:
-            if logger: logger.warning("No se pudo chequear la última versión de edge-tts en PyPI (sin red o falló la consulta); se sigue con la versión instalada.")
-            return
-        if instalada == ultima and not forzar:
-            if logger: logger.info(f"edge-tts ya está en su última versión ({instalada}).")
-            return
-        if logger: logger.info(f"Actualizando edge-tts ({instalada} -> {ultima})...")
-        resultado = subprocess.run(
-            ["pip", "install", "--upgrade", "edge-tts", "--break-system-packages"],
-            capture_output=True, text=True, timeout=90,
-        )
-        if resultado.returncode == 0:
-            if logger: logger.info(f"edge-tts actualizado correctamente a {ultima}.")
-        else:
-            if logger: logger.warning(f"Falló la actualización de edge-tts (pip devolvió error): {resultado.stderr.strip()[:300]}")
-    except Exception as e:
-        if logger: logger.warning(f"No se pudo actualizar edge-tts automáticamente: {e}")
-
-
-# ===================== Fallback: gTTS (motor de emergencia) =====================
-# edge_tts depende de un servicio no oficial de Microsoft que puede dejar de
-# responder con audio real para todo el mundo durante un rato (confirmado:
-# en la v4.1 falló tanto con la voz principal como con la alternativa y con
-# la de inglés). La auto-actualización de arriba ataca la causa de "librería
-# desactualizada", pero no sirve cuando el problema está del lado de
-# Microsoft y no del lado de este script. Para que el video nunca se quede
-# sin audio por esto, si edge_tts agota TODOS sus reintentos (incluido el
-# extra tras la actualización forzada) se usa gTTS como último recurso: es
-# un servicio de Google, totalmente aparte del de Microsoft.
-try:
-    from gtts import gTTS
-    _GTTS_DISPONIBLE = True
-except ImportError:
-    _GTTS_DISPONIBLE = False
-
-
-def _instalar_gtts_si_hace_falta(logger=None):
-    """Instala gTTS con pip la primera vez que hace falta (recién cuando
-    edge_tts ya falló del todo), igual que la auto-actualización de
-    edge-tts de más arriba. No bloquea nada más si falla."""
-    global _GTTS_DISPONIBLE, gTTS
-    if _GTTS_DISPONIBLE:
-        return True
-    try:
-        if logger: logger.info("gTTS no está instalado; instalando (motor de emergencia, edge_tts agotó todos sus reintentos)...")
-        resultado = subprocess.run(
-            ["pip", "install", "gTTS", "--break-system-packages"],
-            capture_output=True, text=True, timeout=90,
-        )
-        if resultado.returncode != 0:
-            if logger: logger.warning(f"No se pudo instalar gTTS: {resultado.stderr.strip()[:300]}")
-            return False
-        from gtts import gTTS as _gTTS
-        gTTS = _gTTS
-        _GTTS_DISPONIBLE = True
-        if logger: logger.info("gTTS instalado correctamente.")
-        return True
-    except Exception as e:
-        if logger: logger.warning(f"No se pudo instalar gTTS: {e}")
-        return False
-
-
-def _idioma_gtts_desde_voz(voz):
-    """Deduce el código de idioma de gTTS a partir del nombre de voz de
-    edge_tts (ej. 'es-PE-AlexNeural' -> 'es', 'en-GB-RyanNeural' -> 'en')."""
-    return "en" if voz.lower().startswith("en-") else "es"
-
-
-def _aplicar_velocidad_ffmpeg(ruta_entrada, ruta_salida, velocidad, logger=None):
-    """Aplica el % de velocidad (mismo formato que usa edge_tts, ej. '-10%')
-    a un audio ya generado, vía el filtro atempo de ffmpeg. gTTS no tiene
-    forma de pedir la velocidad al generar, así que se ajusta después."""
-    try:
-        pct = float(str(velocidad).replace("%", "").replace("+", ""))
-    except Exception:
-        pct = 0.0
-    factor = max(0.5, min(1.0 + (pct / 100.0), 2.0))
-    if abs(factor - 1.0) < 0.001:
-        if ruta_entrada != ruta_salida:
-            shutil.copyfile(ruta_entrada, ruta_salida)
-        return
-    cmd = ["ffmpeg", "-y", "-i", ruta_entrada, "-filter:a", f"atempo={factor}", ruta_salida]
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        # Antes esto quedaba en silencio (solo se copiaba el crudo sin
-        # avisar). Ahora se loguea para saber si el archivo final vacío
-        # viene de acá o de gTTS mismo.
-        if logger: logger.warning(f"ffmpeg no pudo ajustar la velocidad del audio de gTTS (código {resultado.returncode}): {resultado.stderr.strip()[-300:]}. Se usa el audio de gTTS sin ajustar velocidad.")
-        shutil.copyfile(ruta_entrada, ruta_salida)
-
-
-def _generar_chunk_audio_gtts_fallback(texto, voz, ruta_audio, velocidad, logger=None):
-    """Último recurso cuando edge_tts (Microsoft) no devolvió audio ni
-    actualizando la librería: genera el audio con gTTS (Google). Tira
-    RuntimeError si tampoco esto funciona, para que quien llama sepa que
-    de verdad no hay forma de generar audio en este momento."""
-    if not _instalar_gtts_si_hace_falta(logger=logger):
-        raise RuntimeError("gTTS no está disponible y no se pudo instalar.")
-    idioma = _idioma_gtts_desde_voz(voz)
-    ruta_cruda = f"{ruta_audio}.gtts_crudo.mp3"
-    gTTS(text=texto, lang=idioma).save(ruta_cruda)
-    # Se registra el tamaño del archivo crudo de gTTS ANTES de tocarlo con
-    # ffmpeg, para poder distinguir en el log si el problema es que gTTS
-    # (Google) tampoco devolvió audio real, o si el archivo de gTTS estaba
-    # bien y el que lo rompió fue el paso de ajuste de velocidad de acá
-    # abajo.
-    tamano_crudo = os.path.getsize(ruta_cruda) if os.path.exists(ruta_cruda) else 0
-    if logger: logger.info(f"gTTS generó {tamano_crudo} bytes en el archivo crudo (antes de ajustar velocidad).")
-    if tamano_crudo == 0:
-        if os.path.exists(ruta_cruda):
-            os.remove(ruta_cruda)
-        raise RuntimeError("gTTS devolvió un archivo vacío (0 bytes): probablemente no hay conexión desde este dispositivo hacia el servicio de Google usado por gTTS, o el pedido fue rechazado.")
-    try:
-        _aplicar_velocidad_ffmpeg(ruta_cruda, ruta_audio, velocidad, logger=logger)
-    finally:
-        if os.path.exists(ruta_cruda):
-            os.remove(ruta_cruda)
-    tamano_final = os.path.getsize(ruta_audio) if os.path.exists(ruta_audio) else 0
-    if logger: logger.info(f"Audio final de gTTS (después de ajustar velocidad): {tamano_final} bytes.")
-    obtener_duracion_audio(ruta_audio)  # valida que haya quedado audio real
-    if logger:
-        logger.warning("Audio generado con gTTS (fallback): edge_tts (Microsoft) no respondió tras todos los reintentos. El tono configurado no se aplica en este modo (gTTS no lo soporta); la velocidad sí.")
-
-
-# ===================== Audio y tiempos =====================
-
-
-def _dividir_texto_en_partes_audio(texto, n_partes):
-    """Divide el texto en n_partes trozos lo mas parejos posible en
-    caracteres, cortando siempre al final de una frase completa (nunca a
-    mitad de una). Si hay menos frases que n_partes, devuelve una parte
-    por frase."""
-    frases = re.split(r"(?<=[.!?])\s+", texto.strip())
-    frases = [f.strip() for f in frases if f.strip()]
-    if not frases:
-        return [texto] if texto.strip() else []
-    if len(frases) <= n_partes:
-        return frases
-    total_chars = sum(len(f) for f in frases)
-    objetivo = total_chars / n_partes
-    partes, actual, chars_actual = [], [], 0
-    for frase in frases:
-        if actual and chars_actual >= objetivo and len(partes) < n_partes - 1:
-            partes.append(" ".join(actual))
-            actual, chars_actual = [], 0
-        actual.append(frase)
-        chars_actual += len(frase) + 1
-    if actual:
-        partes.append(" ".join(actual))
-    return partes
-
-
-async def _generar_chunk_audio_y_tiempos_async(texto, voz, ruta_audio, logger=None, tono=TONO, velocidad=VELOCIDAD, intentos=3):
-    """Genera un unico chunk de audio con una sola llamada a edge_tts (sin
-    trocear). Es la logica 'de siempre'; se usa tanto para textos cortos
-    como para cada parte cuando generar_audio_y_tiempos_async trocea el
-    texto largo.
-
-    Reintenta automaticamente ante errores de red/conexion (DNS, socket,
-    SSL, stream cortado) hasta 'intentos' veces, con espera creciente entre
-    cada intento (2s, 4s, 6s...), antes de darse por vencido y propagar el
-    error."""
-    ultimo_error = None
-    submaker = None
-    uso_fallback_gtts = False
-    for intento in range(1, intentos + 1):
-        try:
-            communicate = edge_tts.Communicate(texto, voz, pitch=tono, rate=velocidad, boundary="WordBoundary")
-            submaker = edge_tts.SubMaker()
-            with open(ruta_audio, "wb") as file:
-                async for chunk in communicate.stream():
-                    tipo = chunk.get("type")
-                    if tipo == "audio":
-                        file.write(chunk["data"])
-                    elif tipo == "WordBoundary":
-                        submaker.feed(chunk)
-            # edge_tts a veces responde sin tirar ningún error pero deja un
-            # audio vacío o cortado a la mitad (por ejemplo si la conexión
-            # se corta un instante durante la descarga): sin esta
-            # verificación eso pasaba desapercibido acá y recién tronaba
-            # más adelante, en otra función, tumbando el video entero.
-            # Probar la duración con ffprobe en este mismo punto detecta
-            # ambos casos (vacío o corrupto) y los manda al mismo
-            # reintento de acá abajo, sea cual sea la causa exacta.
-            try:
-                obtener_duracion_audio(ruta_audio)
-            except Exception:
-                raise RuntimeError("edge_tts devolvió un audio vacío o dañado (no se pudo leer su duración), sin tirar error propio.")
-            break
-        except Exception as e:
-            ultimo_error = e
-            if logger:
-                logger.warning(f"Intento {intento}/{intentos} fallo generando voz ({e}).")
-            if intento < intentos:
-                await asyncio.sleep(2 * intento)
-            else:
-                # Los reintentos normales ya se agotaron. Antes de rendirse
-                # del todo, se dispara una actualización forzada de
-                # edge-tts (por si la causa es librería desactualizada,
-                # que es lo más común según los issues del repo oficial) y
-                # se prueba UNA vez más. Si esto también falla, recién ahí
-                # se propaga el error como antes.
-                if logger: logger.warning("Se agotaron los reintentos normales; se intenta actualizar edge-tts y reintentar una vez más antes de rendirse.")
-                actualizar_edge_tts_si_hace_falta(logger=logger, forzar=True)
-                try:
-                    communicate = edge_tts.Communicate(texto, voz, pitch=tono, rate=velocidad, boundary="WordBoundary")
-                    submaker = edge_tts.SubMaker()
-                    with open(ruta_audio, "wb") as file:
-                        async for chunk in communicate.stream():
-                            tipo = chunk.get("type")
-                            if tipo == "audio":
-                                file.write(chunk["data"])
-                            elif tipo == "WordBoundary":
-                                submaker.feed(chunk)
-                    obtener_duracion_audio(ruta_audio)
-                    if logger: logger.info("La generación de voz funcionó tras actualizar edge-tts.")
-                except Exception:
-                    # edge_tts agotó TODAS las chances, incluida la
-                    # actualización forzada de la librería: el problema está
-                    # del lado del servicio de Microsoft, no de este script.
-                    # Último recurso: gTTS (Google), un servicio aparte.
-                    try:
-                        _generar_chunk_audio_gtts_fallback(texto, voz, ruta_audio, velocidad, logger=logger)
-                        submaker = None
-                        uso_fallback_gtts = True
-                    except Exception as e_gtts:
-                        # Antes acá se perdía el motivo real por el que
-                        # gTTS fallaba (se tapaba con el error viejo de
-                        # edge_tts). Ahora se loguea aparte y se junta en
-                        # el mensaje final, para poder diagnosticar cuál de
-                        # los dos motores fue el que falló y por qué.
-                        if logger: logger.warning(f"El fallback de gTTS también falló ({e_gtts}).")
-                        raise RuntimeError(f"edge_tts falló ({ultimo_error}) y el fallback de gTTS también falló ({e_gtts}).")
-    palabras_tiempos = []
-    if uso_fallback_gtts:
-        # gTTS no da tiempos de palabra reales (a diferencia de edge_tts):
-        # se reparten las palabras parejo a lo largo de la duración real
-        # del audio, para que los subtítulos sigan funcionando de forma
-        # aproximada en vez de quedar sin tiempos.
-        try:
-            duracion_total = obtener_duracion_audio(ruta_audio)
-            palabras = texto.split()
-            if palabras:
-                paso = duracion_total / len(palabras)
-                for i, palabra in enumerate(palabras):
-                    palabras_tiempos.append({"texto": palabra, "inicio": i * paso, "fin": (i + 1) * paso})
-        except Exception:
-            pass
-    else:
-        try:
-            if hasattr(submaker, "offset_and_duration"):
-                for offset, duration, text in submaker.offset_and_duration:
-                    inicio, dur = offset / 10000000.0, duration / 10000000.0
-                    palabras_tiempos.append({"texto": text, "inicio": inicio, "fin": inicio + dur})
-            elif hasattr(submaker, "cues"):
-                for cue in submaker.cues:
-                    inicio = cue.start.total_seconds() if hasattr(cue.start, "total_seconds") else cue.start / 10000000.0
-                    fin = cue.end.total_seconds() if hasattr(cue.end, "total_seconds") else cue.end / 10000000.0
-                    texto_cue = getattr(cue, "content", None) or getattr(cue, "text", "")
-                    palabras_tiempos.append({"texto": texto_cue, "inicio": inicio, "fin": fin})
-        except Exception:
-            pass
-    return palabras_tiempos
-
-
-async def generar_audio_y_tiempos_async(texto, voz, ruta_audio, logger=None, tono=TONO, velocidad=VELOCIDAD):
-    """Si el texto supera los 1000 caracteres, SIEMPRE se trocea en 5 partes
-    (cortando por frases completas) y se genera el audio de cada parte por
-    separado, para reducir la chance de que edge_tts corte el stream a
-    mitad de un texto largo. Despues se concatenan los audios parciales con
-    ffmpeg y se ajustan los tiempos de palabra de cada parte sumandoles el
-    offset acumulado de las partes anteriores."""
-    if len(texto) <= 1000:
-        return await _generar_chunk_audio_y_tiempos_async(texto, voz, ruta_audio, logger=logger, tono=tono, velocidad=velocidad)
-
-    partes = _dividir_texto_en_partes_audio(texto, 5)
-    if logger:
-        logger.info(f"Texto de {len(texto)} caracteres: se trocea en {len(partes)} partes para la generación de voz.")
-
-    rutas_parciales = []
-    palabras_tiempos = []
-    offset_acumulado = 0.0
-    ruta_lista = f"{ruta_audio}.concat.txt"
-    try:
-        for i, parte in enumerate(partes):
-            ruta_parcial = f"{ruta_audio}.parte{i}.mp3"
-            if logger:
-                logger.info(f"Generando parte {i + 1}/{len(partes)} de la voz ({len(parte)} caracteres).")
-            tiempos_parte = await _generar_chunk_audio_y_tiempos_async(parte, voz, ruta_parcial, logger=logger, tono=tono, velocidad=velocidad)
-            for pt in tiempos_parte:
-                palabras_tiempos.append({"texto": pt["texto"], "inicio": pt["inicio"] + offset_acumulado, "fin": pt["fin"] + offset_acumulado})
-            rutas_parciales.append(ruta_parcial)
-            offset_acumulado += obtener_duracion_audio(ruta_parcial)
-
-        with open(ruta_lista, "w", encoding="utf-8") as f:
-            for r in rutas_parciales:
-                f.write(f"file '{os.path.abspath(r)}'\n")
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", ruta_lista, "-c", "copy", ruta_audio]
-        resultado_ffmpeg = subprocess.run(cmd, capture_output=True, text=True)
-        if resultado_ffmpeg.returncode != 0:
-            raise RuntimeError(f"ffmpeg no pudo unir las {len(partes)} partes de audio: {resultado_ffmpeg.stderr[-500:]}")
-    finally:
-        for r in rutas_parciales:
-            if os.path.exists(r):
-                os.remove(r)
-        if os.path.exists(ruta_lista):
-            os.remove(ruta_lista)
-
-    return palabras_tiempos
-
-
-def generar_audio_y_tiempos(texto, voz, ruta_audio, logger=None, tono=TONO, velocidad=VELOCIDAD):
-    return asyncio.run(generar_audio_y_tiempos_async(texto, voz, ruta_audio, logger=logger, tono=tono, velocidad=velocidad))
+# edge_tts y gTTS fueron eliminados por completo (v6.5): la narración
+# ahora siempre viene del audio de Chatterbox (gdrive2:audio-listo), ver
+# el módulo "narración con audio de Chatterbox" más abajo. No queda
+# ningún motor de síntesis de voz en este archivo.
 
 
 def obtener_duracion_audio(ruta_audio):
@@ -1965,22 +1587,18 @@ def procesar_todo(texto_bruto, frases_por_bloque, posicion, color_sub, tamano_su
         proyecto = crear_carpeta_proyecto(nombre_base, marca)
 
         actualizar_fase("generando voz", 18, logger=logger)
-        if ruta_audio_externa:
-            # Narración con audio ya generado (Chatterbox), en vez de
-            # edge_tts. El timing palabra por palabra viene de whisper.cpp
-            # (puede venir vacío si whisper.cpp falló; calcular_tiempos_de_bloques
-            # ya sabe repartir proporcionalmente en ese caso, igual que
-            # cuando edge_tts no da tiempos).
-            logger.info(f"Motor de voz: audio externo (Chatterbox) | archivo={ruta_audio_externa}")
-            ruta_audio = ruta_audio_externa
-            palabras_tiempos = palabras_tiempos_externas or []
-        else:
-            voz = VOZ_NARRADOR
-            velocidad_final = _formatear_ajuste_voz(velocidad_voz, "%", VELOCIDAD_VOZ_POR_DEFECTO, VELOCIDAD_VOZ_MIN, VELOCIDAD_VOZ_MAX)
-            tono_final = _formatear_ajuste_voz(tono_voz, "Hz", TONO_VOZ_POR_DEFECTO, TONO_VOZ_MIN, TONO_VOZ_MAX)
-            ruta_audio = os.path.join(proyecto["voz"], "voz.mp3")
-            logger.info(f"Motor de voz: edge_tts | voz={voz} | velocidad={velocidad_final} | tono={tono_final}")
-            palabras_tiempos = generar_audio_y_tiempos(texto_limpio, voz, ruta_audio, logger=logger, tono=tono_final, velocidad=velocidad_final)
+        if not ruta_audio_externa:
+            # edge_tts fue eliminado por completo: ya no hay motor de
+            # síntesis de respaldo. La narración SIEMPRE tiene que venir
+            # de un audio ya generado con Chatterbox (gdrive2:audio-listo).
+            raise RuntimeError("procesar_todo necesita ruta_audio_externa: edge_tts fue eliminado, la narración siempre viene del audio de Chatterbox.")
+        # Narración con audio ya generado (Chatterbox). El timing palabra
+        # por palabra viene de whisper.cpp (puede venir vacío si
+        # whisper.cpp falló; calcular_tiempos_de_bloques ya sabe repartir
+        # proporcionalmente en ese caso).
+        logger.info(f"Motor de voz: audio externo (Chatterbox) | archivo={ruta_audio_externa}")
+        ruta_audio = ruta_audio_externa
+        palabras_tiempos = palabras_tiempos_externas or []
         duracion_total = obtener_duracion_audio(ruta_audio)
 
         tiempos_bloques = calcular_tiempos_de_bloques(bloques, palabras_tiempos, duracion_total)
@@ -2595,24 +2213,32 @@ def generar_segmento_video_gameplay(ruta_gameplay, duracion_total, ruta_salida, 
 
 def _pipeline_video_automatico(logger, ruta_log):
     """Genera un video completo sin intervención humana, usando las fuentes
-    reales del proyecto (v5.4):
-    - Texto: ya parafraseado y listo desde gdrive:txt-limpio (repo
-      "traduce" con Gemini) -- NO se vuelve a traducir/adaptar con Gemini
-      acá, ya viene terminado.
+    reales del proyecto (v6.5):
+    - Audio narrado: de gdrive2:audio-listo (Chatterbox, voz clonada, ya
+      NO edge_tts), con su .txt correspondiente en gdrive:txt-limpio/usados
+      como guion para subtítulos/título/miniatura. El timing palabra por
+      palabra sale de whisper.cpp (no lo da Chatterbox).
     - Fondo: gameplay propio (Slither.io + bot) desde
       gdrive:gameplay_slither, en vez de imágenes de stock.
     Corre el mismo pipeline de audio/video/subtítulos que ya usa la
     interfaz manual (procesar_todo), con fondo_gameplay=True. Deja el
     resultado en _ULTIMO_RESULTADO_AUTOMATICO para que la función de
-    subida lo encuentre."""
+    subida lo encuentre. Es la misma lógica que _pipeline_test_chatterbox
+    con segundos_test=None, pero conservando el armado de
+    _ULTIMO_RESULTADO_AUTOMATICO que espera _subir_ultimo_resultado_a_youtube."""
     global _ULTIMO_RESULTADO_AUTOMATICO
-    logger.info("Pipeline automático: buscando texto listo en txt-limpio...")
-    guion, nombre_archivo_texto = _elegir_texto_desde_drive(logger=logger)
+    logger.info("Pipeline automático: buscando audio de Chatterbox con su texto en audio-listo...")
+    guion, nombre_archivo_texto, ruta_audio_completo, nombre_archivo_audio = _elegir_audio_chatterbox_con_texto(logger=logger)
     if not guion:
-        raise RuntimeError("No se encontró ningún texto nuevo en txt-limpio para usar.")
+        raise RuntimeError("No se encontró ningún audio en audio-listo con su .txt correspondiente en txt-limpio/usados.")
 
     titulo_resumen = os.path.splitext(nombre_archivo_texto)[0].replace("_", " ").strip()
-    logger.info(f"Texto elegido: {nombre_archivo_texto} ({len(guion.split())} palabras)")
+    logger.info(f"Audio elegido: {nombre_archivo_audio} | texto: {nombre_archivo_texto} ({len(guion.split())} palabras)")
+
+    logger.info("Pipeline automático: transcribiendo con whisper.cpp para sacar el timing...")
+    palabras_tiempos = _transcribir_con_whisper(ruta_audio_completo, logger=logger)
+    if not palabras_tiempos:
+        logger.warning("whisper.cpp no devolvió timing; los subtítulos van a usar reparto proporcional (menos preciso).")
 
     logger.info("Pipeline automático: buscando gameplay en gameplay_slither...")
     ruta_gameplay = _elegir_gameplay_desde_drive(logger=logger)
@@ -2630,6 +2256,7 @@ def _pipeline_video_automatico(logger, ruta_log):
         efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
         fondo_gameplay=True, ruta_gameplay=ruta_gameplay,
         logger=logger, ruta_log=ruta_log,
+        ruta_audio_externa=ruta_audio_completo, palabras_tiempos_externas=palabras_tiempos,
     )
 
     with CANDADO_ESTADO:
@@ -2642,11 +2269,13 @@ def _pipeline_video_automatico(logger, ruta_log):
     if not os.path.exists(ruta_video_absoluta):
         raise RuntimeError(f"procesar_todo dijo que terminó, pero no existe el archivo: {ruta_video_absoluta}")
 
-    # Recién acá, con el video ya confirmado, se marca el texto como usado
-    # en Drive (se mueve a txt-limpio/usados/): si algo hubiera fallado
-    # antes, el texto queda disponible para reintentar en la próxima
-    # corrida del workflow.
-    _marcar_texto_usado_en_drive(nombre_archivo_texto, logger=logger)
+    # Recién acá, con el video ya confirmado, se marca el audio como usado
+    # en Drive (se mueve a audio-listo/usados/) y el texto como "ya tiene
+    # audio Chatterbox" (se mueve a txt-limpio/usados/con_audio_chatterbox/):
+    # si algo hubiera fallado antes, quedan disponibles para reintentar en
+    # la próxima corrida del workflow.
+    _marcar_audio_chatterbox_usado_en_drive(nombre_archivo_audio, logger=logger)
+    _marcar_texto_con_audio_chatterbox_en_drive(nombre_archivo_texto, logger=logger)
 
     _ULTIMO_RESULTADO_AUTOMATICO = {
         "ruta_video": ruta_video_absoluta,
