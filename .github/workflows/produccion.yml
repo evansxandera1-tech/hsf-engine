@@ -25,6 +25,14 @@ jobs:
       - name: Instalar rclone
         run: curl https://rclone.org/install.sh | sudo bash
 
+      - name: Compilar whisper.cpp
+        run: |
+          git clone https://github.com/ggerganov/whisper.cpp.git ~/whisper.cpp
+          cd ~/whisper.cpp
+          cmake -B build
+          cmake --build build --config Release -j
+          bash ./models/download-ggml-model.sh base
+
       - name: Configurar rclone (credenciales de Drive)
         run: |
           mkdir -p ~/.config/rclone
