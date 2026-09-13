@@ -50,6 +50,8 @@ CARPETA_MINIATURA_LOCAL = os.path.join(CARPETA_BASE, "miniatura_local_gdrive")
 RCLONE_REMOTE_TXT_LIMPIO = "gdrive:txt-limpio"
 RCLONE_REMOTE_TXT_LIMPIO_USADOS = f"{RCLONE_REMOTE_TXT_LIMPIO}/usados"
 RCLONE_REMOTE_GAMEPLAY = "gdrive2:HSF/gameplay-clasificador-colores"
+RCLONE_REMOTE_GAMEPLAY_SLITHER = "gdrive:gameplay_slither"
+RCLONE_REMOTES_GAMEPLAY = [RCLONE_REMOTE_GAMEPLAY, RCLONE_REMOTE_GAMEPLAY_SLITHER]
 RCLONE_REMOTE_MINIATURA = "gdrive:miniatura"
 CARPETA_INTRO_LOCAL = os.path.join(CARPETA_BASE, "intro_local_gdrive")
 RCLONE_REMOTE_INTRO = "gdrive:intro"
@@ -2221,22 +2223,25 @@ def _obtener_plantilla_miniatura_desde_drive(logger=None):
 
 
 def _elegir_gameplay_desde_drive(logger=None):
-    """Lista los videos disponibles en gdrive:gameplay_slither (sin
-    descargar todo el catálogo) y descarga solo UNO, elegido al azar, a la
-    carpeta local. Devuelve la ruta local del gameplay elegido, o None si
-    no hay ninguno disponible."""
+    """Elige al azar una de las carpetas de gameplay disponibles
+    (RCLONE_REMOTES_GAMEPLAY: clasificador de colores en gdrive2, o
+    Slither.io en gdrive), lista los videos de esa carpeta (sin descargar
+    todo el catálogo) y descarga solo UNO, elegido al azar, a la carpeta
+    local. Devuelve la ruta local del gameplay elegido, o None si no hay
+    ninguno disponible."""
+    remote_elegido = _random_fuentes.choice(RCLONE_REMOTES_GAMEPLAY)
     try:
         resultado = subprocess.run(
-            ["rclone", "lsf", RCLONE_REMOTE_GAMEPLAY],
+            ["rclone", "lsf", remote_elegido],
             capture_output=True, text=True, timeout=60,
         )
         if resultado.returncode != 0:
             if logger:
-                logger.error(f"rclone lsf (gameplay_slither) falló: {resultado.stderr[:300]}")
+                logger.error(f"rclone lsf ({remote_elegido}) falló: {resultado.stderr[:300]}")
             return None
     except Exception as e:
         if logger:
-            logger.error(f"Error listando gameplay_slither: {e}")
+            logger.error(f"Error listando {remote_elegido}: {e}")
         return None
 
     candidatos = [
@@ -2245,15 +2250,20 @@ def _elegir_gameplay_desde_drive(logger=None):
     ]
     if not candidatos:
         if logger:
-            logger.warning("gameplay_slither: no hay ningún video disponible.")
+            logger.warning(f"{remote_elegido}: no hay ningún video disponible.")
         return None
 
     elegido = _random_fuentes.choice(candidatos)
-    ruta_local = os.path.join(CARPETA_GAMEPLAY_LOCAL, elegido)
+    # Subcarpeta local por remote, para que no choquen nombres repetidos
+    # entre las dos carpetas de gameplay.
+    subcarpeta_local = remote_elegido.split(":", 1)[0]
+    carpeta_local_remote = os.path.join(CARPETA_GAMEPLAY_LOCAL, subcarpeta_local)
+    os.makedirs(carpeta_local_remote, exist_ok=True)
+    ruta_local = os.path.join(carpeta_local_remote, elegido)
     if not os.path.exists(ruta_local):
         try:
             resultado = subprocess.run(
-                ["rclone", "copyto", f"{RCLONE_REMOTE_GAMEPLAY}/{elegido}", ruta_local],
+                ["rclone", "copyto", f"{remote_elegido}/{elegido}", ruta_local],
                 capture_output=True, text=True, timeout=600,
             )
             if resultado.returncode != 0:
@@ -2266,7 +2276,7 @@ def _elegir_gameplay_desde_drive(logger=None):
             return None
 
     if logger:
-        logger.info(f"Gameplay elegido desde gameplay_slither: {elegido}")
+        logger.info(f"Gameplay elegido desde {remote_elegido}: {elegido}")
     return ruta_local
 
 
