@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 
 
@@ -93,20 +94,44 @@ def subir_a_facebook(ruta_video, texto_miniatura, logger=None):
         handle_archivo = resultado_subida["h"]
 
         # ---- Paso 3: publicar el video en la página con ese handle ----
+        # Con reintentos: este paso puede fallar con "code 6000 / 1363019"
+        # (glitch transitorio de Facebook o el archivo aún no asentado del
+        # todo del lado de Meta) incluso cuando los pasos 1 y 2 ya dieron
+        # 200 -- o sea, el archivo se subió bien, pero Facebook todavía no
+        # pudo procesarlo para publicarlo. Reintentar con espera resuelve
+        # la mayoría de estos casos sin tocar nada más del flujo.
         url_publicar = f"https://graph.facebook.com/{API_VERSION}/{page_id}/videos"
-        respuesta = requests.post(
-            url_publicar,
-            data={
-                "access_token": page_token,
-                "description": descripcion,
-                "fbuploader_video_file_chunk": handle_archivo,
-            },
-            timeout=120,
-        )
-        resultado_publicar = _leer_respuesta(respuesta, "paso 3: publicar", logger=logger)
+        intentos_publicar = 3
+        espera_entre_intentos_seg = 15
+        resultado_publicar = None
+        for intento in range(1, intentos_publicar + 1):
+            respuesta = requests.post(
+                url_publicar,
+                data={
+                    "access_token": page_token,
+                    "description": descripcion,
+                    "fbuploader_video_file_chunk": handle_archivo,
+                },
+                timeout=120,
+            )
+            resultado_publicar = _leer_respuesta(
+                respuesta, f"paso 3: publicar (intento {intento}/{intentos_publicar})", logger=logger
+            )
+            if resultado_publicar and "id" in resultado_publicar:
+                break
+            if logger:
+                logger.warning(
+                    f"Facebook (paso 3, intento {intento}/{intentos_publicar}): "
+                    f"no se pudo publicar todavía: {resultado_publicar}"
+                )
+            if intento < intentos_publicar:
+                time.sleep(espera_entre_intentos_seg)
+
         if not resultado_publicar or "id" not in resultado_publicar:
             if logger:
-                logger.error(f"Error publicando el video en Facebook: {resultado_publicar}")
+                logger.error(
+                    f"Error publicando el video en Facebook tras {intentos_publicar} intentos: {resultado_publicar}"
+                )
             return False
 
         if logger:
