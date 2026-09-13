@@ -2045,11 +2045,19 @@ def _pipeline_test_chatterbox(logger, ruta_log, segundos_test=120):
     largo real de producción una vez que el circuito ya se probó y anda
     bien -- no hay una función separada para test y otra para producción.
     El texto completo (sin recortar) se sigue usando para título/miniatura
-    en los dos casos."""
+    en los dos casos.
+
+    Arma _ULTIMO_RESULTADO_AUTOMATICO igual que _pipeline_video_automatico,
+    así _subir_ultimo_resultado_a_youtube (que también sube a Facebook) se
+    puede llamar después de esta función tanto en el test corto como en el
+    video largo real."""
+    global _ULTIMO_RESULTADO_AUTOMATICO
     logger.info("Chatterbox: buscando un audio con su texto correspondiente...")
     guion, nombre_archivo_texto, ruta_audio_completo, nombre_archivo_audio = _elegir_audio_chatterbox_con_texto(logger=logger)
     if not guion:
         raise RuntimeError("No se encontró ningún audio en audio-listo con su .txt correspondiente en txt-limpio/usados.")
+
+    titulo_resumen = os.path.splitext(nombre_archivo_texto)[0].replace("_", " ").strip()
 
     if segundos_test:
         logger.info(f"Chatterbox: recortando los primeros {segundos_test}s de {nombre_archivo_audio} (modo test)...")
@@ -2104,6 +2112,15 @@ def _pipeline_test_chatterbox(logger, ruta_log, segundos_test=120):
         # Chatterbox" (se mueve a txt-limpio/usados/con_audio_chatterbox/).
         _marcar_audio_chatterbox_usado_en_drive(nombre_archivo_audio, logger=logger)
         _marcar_texto_con_audio_chatterbox_en_drive(nombre_archivo_texto, logger=logger)
+
+    _ULTIMO_RESULTADO_AUTOMATICO = {
+        "ruta_video": ruta_video_absoluta,
+        "titulo_resumen": titulo_resumen,
+        "guion": guion,
+        "subreddits": [],
+        "cantidad_historias": 1,
+        "carpeta_proyecto": os.path.dirname(ruta_video_absoluta),
+    }
     return ruta_video_absoluta
 
 
