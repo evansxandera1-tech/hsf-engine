@@ -654,17 +654,55 @@ import random
 # ===================== Música =====================
 
 
-def seleccionar_musica_fondo(genero):
-    if genero == "ninguno": return None
-    carpeta = os.path.join(CARPETA_MUSICA, genero)
-    if os.path.isdir(carpeta):
-        pistas = [os.path.join(carpeta, f) for f in os.listdir(carpeta) if f.endswith(".mp3")]
-        if pistas: return random.choice(pistas)
-    return None
+RCLONE_REMOTE_MUSICA = "gdrive2:fondo-musica"
+CARPETA_MUSICA_LOCAL = os.path.join(CARPETA_BASE, "musica_local_gdrive")
+os.makedirs(CARPETA_MUSICA_LOCAL, exist_ok=True)
 
 
-for _genero in ["piano", "ambient", "cuerdas"]:
-    os.makedirs(os.path.join(CARPETA_MUSICA, _genero), exist_ok=True)
+def seleccionar_musica_fondo(genero=None, logger=None):
+    """Elige un mp3 al azar de gdrive2:fondo-musica (carpeta plana, sin
+    subcarpetas por género) y lo descarga a CARPETA_MUSICA_LOCAL si no lo
+    tiene ya. El parámetro "genero" se ignora -- se dejó solo para no
+    romper las llamadas existentes que todavía lo pasan. Devuelve la ruta
+    local del mp3 elegido, o None si no hay ninguno disponible."""
+    try:
+        resultado = subprocess.run(
+            ["rclone", "lsf", RCLONE_REMOTE_MUSICA],
+            capture_output=True, text=True, timeout=60,
+        )
+        if resultado.returncode != 0:
+            if logger:
+                logger.error(f"rclone lsf (fondo-musica) falló: {resultado.stderr[:300]}")
+            return None
+    except Exception as e:
+        if logger:
+            logger.error(f"Error listando fondo-musica: {e}")
+        return None
+
+    candidatos = [n.strip() for n in resultado.stdout.splitlines() if n.strip().lower().endswith(".mp3")]
+    if not candidatos:
+        if logger:
+            logger.warning("fondo-musica: no hay ningún mp3 disponible.")
+        return None
+
+    elegido = random.choice(candidatos)
+    ruta_local = os.path.join(CARPETA_MUSICA_LOCAL, elegido)
+    if not os.path.exists(ruta_local):
+        try:
+            resultado = subprocess.run(
+                ["rclone", "copyto", f"{RCLONE_REMOTE_MUSICA}/{elegido}", ruta_local],
+                capture_output=True, text=True, timeout=300,
+            )
+            if resultado.returncode != 0:
+                if logger:
+                    logger.error(f"rclone copyto (musica {elegido}) falló: {resultado.stderr[:300]}")
+                return None
+        except Exception as e:
+            if logger:
+                logger.error(f"Error descargando musica {elegido}: {e}")
+            return None
+
+    return ruta_local
 
 # ============================================================
 # ---- módulo original: proyecto.py ----
@@ -1684,7 +1722,7 @@ def procesar_todo(texto_bruto, frases_por_bloque, posicion, color_sub, tamano_su
             ruta_video_efecto = os.path.join(proyecto["efecto"], "con_efecto.mp4")
             ruta_video_lista = aplicar_efecto_video(ruta_video_subs, ruta_video_efecto, efecto_video, duracion_total, velocidad_efecto=velocidad_efecto, logger=logger)
 
-        ruta_musica = seleccionar_musica_fondo(musica_genero)
+        ruta_musica = seleccionar_musica_fondo(musica_genero, logger=logger)
         nombre_final = f"{nombre_base}_{marca}_hsf.mp4"
         ruta_final = os.path.join(proyecto["raiz"], nombre_final)
         volumen_gameplay = 1 if fondo_gameplay and ruta_gameplay else None
