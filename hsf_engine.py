@@ -2680,10 +2680,10 @@ def _generar_prompt_imagen_miniatura(historia_completa, titulo, logger=None):
 
 def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, logger=None, ruta_video_fondo=None, historia_completa=None):
     """Miniatura fija: se dibuja el texto normal de la miniatura (la
-    pregunta-dilema generada con Gemini) sobre la plantilla descargada de
-    Drive (gdrive:miniatura/miniatura_plantilla1.png). Ya no genera nada
-    con IA (Pollinations/seedream): siempre la misma plantilla, solo
-    cambia el texto."""
+    pregunta-dilema generada con Gemini) sobre una de las 13 plantillas
+    descargadas de Drive (gdrive:miniatura/miniatura_plantillaN.png,
+    elegida al azar por _obtener_plantilla_miniatura_desde_drive). Ya no
+    genera nada con IA (Pollinations/seedream), solo dibuja el texto."""
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
     import textwrap
 
@@ -2742,11 +2742,13 @@ def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, lo
     total_h = sum(h * line_spacing for h in line_heights)
     cur_y = text_y0 + (max_h - total_h) / 2
 
-    # Degradado rosa-violeta (a tono con los colores de la plantilla) en vez
-    # de negro plano, con una sombra suave debajo para que resalte sobre la
-    # tarjeta blanca.
-    color_rosa = (255, 45, 149)     # rosa fuerte
-    color_violeta = (123, 46, 207)  # violeta
+    # Antes el texto era un degradado rosa-violeta fijo, calibrado a mano
+    # para una sola plantilla. Con 13 plantillas de colores distintos ese
+    # color fijo no contrastaba en la mayoria (texto invisible o feo en
+    # las oscuras/rojas). Ahora es blanco con borde negro grueso + sombra:
+    # se lee bien encima de cualquier color de fondo, sin tener que
+    # calibrar plantilla por plantilla.
+    grosor_borde = max(2, int(6 * escala_y))
 
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
@@ -2754,32 +2756,22 @@ def generar_miniatura_clickbait(titulo_miniatura, resumen_texto, ruta_salida, lo
         cx = text_x0 + (max_w - lw) / 2
         y_pos = int(cur_y)
 
-        # Sombra suave (leve desplazamiento + blur) para dar profundidad.
+        # Sombra suave (leve desplazamiento + blur) para dar profundidad,
+        # ademas del borde negro solido.
         pad = 20
         shadow = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
-        sd.text((pad - bbox[0], pad - bbox[1]), line, font=font, fill=(123, 46, 207, 140))
+        sd.text((pad - bbox[0], pad - bbox[1]), line, font=font, fill=(0, 0, 0, 160))
         shadow = shadow.filter(ImageFilter.GaussianBlur(6))
         img.paste(shadow, (int(cx) - pad, y_pos - pad + 4), shadow)
         draw = ImageDraw.Draw(img)
 
-        # Máscara del texto (blanco = letra) para rellenar con degradado.
-        mask = Image.new("L", (lw, lh), 0)
-        md = ImageDraw.Draw(mask)
-        md.text((-bbox[0], -bbox[1]), line, font=font, fill=255)
-
-        # Degradado horizontal rosa -> violeta del tamaño de la línea.
-        gradiente = Image.new("RGB", (lw, lh), color_rosa)
-        gd = ImageDraw.Draw(gradiente)
-        for gx in range(lw):
-            t = gx / max(1, lw - 1)
-            r = int(color_rosa[0] + (color_violeta[0] - color_rosa[0]) * t)
-            g = int(color_rosa[1] + (color_violeta[1] - color_rosa[1]) * t)
-            b = int(color_rosa[2] + (color_violeta[2] - color_rosa[2]) * t)
-            gd.line([(gx, 0), (gx, lh)], fill=(r, g, b))
-
-        img.paste(gradiente, (int(cx), y_pos), mask)
-        draw = ImageDraw.Draw(img)
+        # Texto blanco con borde negro grueso (stroke): contrasta con
+        # cualquier color de fondo de las 13 plantillas.
+        draw.text(
+            (int(cx), y_pos), line, font=font, fill=(255, 255, 255),
+            stroke_width=grosor_borde, stroke_fill=(0, 0, 0),
+        )
         cur_y += lh * line_spacing
 
     img = img.resize((RESOLUCION_ANCHO, RESOLUCION_ALTO), Image.LANCZOS)
