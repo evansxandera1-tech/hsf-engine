@@ -36,8 +36,11 @@ def subir_a_facebook(ruta_video, texto_miniatura, logger=None):
     caso de los videos largos de producción). No rompe el flujo si falla:
     siempre devuelve True/False, nunca deja pasar la excepción.
 
-    El host graph-video.facebook.com (usado antes) está deprecado según la
-    documentación oficial de Meta; todo pasa ahora por graph.facebook.com."""
+    El host graph-video.facebook.com está deprecado para SUBIR el archivo
+    (pasos 1 y 2, que usan graph.facebook.com vía la Resumable Upload API),
+    pero para PUBLICAR (paso 3) la guía oficial de Meta sigue usando
+    graph-video.facebook.com en su propio ejemplo -- por eso cada paso usa
+    un host distinto acá."""
     try:
         app_id = os.environ.get("FACEBOOK_APP_ID")
         page_id = os.environ.get("FACEBOOK_PAGE_ID")
@@ -94,13 +97,15 @@ def subir_a_facebook(ruta_video, texto_miniatura, logger=None):
         handle_archivo = resultado_subida["h"]
 
         # ---- Paso 3: publicar el video en la página con ese handle ----
-        # Con reintentos: este paso puede fallar con "code 6000 / 1363019"
-        # (glitch transitorio de Facebook o el archivo aún no asentado del
-        # todo del lado de Meta) incluso cuando los pasos 1 y 2 ya dieron
-        # 200 -- o sea, el archivo se subió bien, pero Facebook todavía no
-        # pudo procesarlo para publicarlo. Reintentar con espera resuelve
-        # la mayoría de estos casos sin tocar nada más del flujo.
-        url_publicar = f"https://graph.facebook.com/{API_VERSION}/{page_id}/videos"
+        # OJO: acá el host es graph-video.facebook.com, no
+        # graph.facebook.com. La doc general del Video API dice que
+        # graph-video está deprecado, pero la guía específica "Publish a
+        # Video" sigue usando graph-video.facebook.com en su propio
+        # ejemplo para este endpoint puntual (/<PAGE_ID>/videos) -- y es
+        # justo el paso que venía fallando siempre con code 6000/1363019
+        # aun con la subida (pasos 1 y 2) ya confirmada en graph.facebook.com.
+        # Con reintentos: por si igual hay algún glitch transitorio de por medio.
+        url_publicar = f"https://graph-video.facebook.com/{API_VERSION}/{page_id}/videos"
         intentos_publicar = 3
         espera_entre_intentos_seg = 15
         resultado_publicar = None
