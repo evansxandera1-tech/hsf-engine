@@ -2,64 +2,116 @@ import os
 import requests
 
 
-def subir_a_facebook(ruta_video, texto_miniatura, logger=None):
-    """Sube el video ya generado a la página de Facebook. No rompe el flujo si falla."""
+API_VERSION = "v25.0"
+
+
+def _leer_respuesta(respuesta, paso, logger=None):
+    """Loguea status/cuerpo crudo y devuelve el JSON parseado, o None si
+    Facebook no devolvió algo utilizable (respuesta vacía o no-JSON). Mismo
+    criterio en los 3 pasos, para no repetir el bug viejo de asumir que
+    respuesta.json() siempre funciona."""
+    if logger:
+        logger.info(f"Facebook ({paso}) respondió con status {respuesta.status_code}")
+
+    if not respuesta.text.strip():
+        if logger:
+            logger.error(f"Facebook ({paso}): respuesta vacía (status {respuesta.status_code}).")
+        return None
+
     try:
+        return respuesta.json()
+    except ValueError:
+        if logger:
+            logger.error(
+                f"Facebook ({paso}): no devolvió JSON (status {respuesta.status_code}). "
+                f"Cuerpo crudo: {respuesta.text[:500]}"
+            )
+        return None
+
+
+def subir_a_facebook(ruta_video, texto_miniatura, logger=None):
+    """Sube el video ya generado a la página de Facebook usando la Resumable
+    Upload API (obligatoria para videos de más de 20 min / 1GB, que es el
+    caso de los videos largos de producción). No rompe el flujo si falla:
+    siempre devuelve True/False, nunca deja pasar la excepción.
+
+    El host graph-video.facebook.com (usado antes) está deprecado según la
+    documentación oficial de Meta; todo pasa ahora por graph.facebook.com."""
+    try:
+        app_id = os.environ.get("FACEBOOK_APP_ID")
         page_id = os.environ.get("FACEBOOK_PAGE_ID")
         page_token = os.environ.get("FACEBOOK_PAGE_TOKEN")
 
-        if not page_id or not page_token:
+        if not app_id or not page_id or not page_token:
             if logger:
-                logger.warning("FACEBOOK_PAGE_ID o FACEBOOK_PAGE_TOKEN no configurados, se salta Facebook")
-            return False
-
-        descripcion = f"{texto_miniatura}\n\n#historias #reflexion #realidad"
-
-        url = f"https://graph-video.facebook.com/v21.0/{page_id}/videos"
-
-        with open(ruta_video, "rb") as archivo_video:
-            respuesta = requests.post(
-                url,
-                data={
-                    "access_token": page_token,
-                    "description": descripcion,
-                },
-                files={"source": archivo_video},
-                timeout=1800,
-            )
-
-        # Antes se llamaba respuesta.json() directo, y si Facebook devolvía
-        # algo vacío o no-JSON (timeout intermedio, error 5xx sin cuerpo,
-        # token vencido, etc.) esto reventaba con un error generico
-        # ("Expecting value: line 1 column 1") que no decia nada util.
-        # Ahora se loguea SIEMPRE el status code y el cuerpo crudo primero,
-        # para poder diagnosticar la proxima vez que falle.
-        if logger:
-            logger.info(f"Facebook respondio con status {respuesta.status_code}")
-
-        if not respuesta.text.strip():
-            if logger:
-                logger.error(f"Facebook devolvió una respuesta vacía (status {respuesta.status_code}).")
-            return False
-
-        try:
-            resultado = respuesta.json()
-        except ValueError:
-            if logger:
-                logger.error(
-                    f"Facebook no devolvió JSON (status {respuesta.status_code}). "
-                    f"Cuerpo crudo: {respuesta.text[:500]}"
+                logger.warning(
+                    "FACEBOOK_APP_ID, FACEBOOK_PAGE_ID o FACEBOOK_PAGE_TOKEN no "
+                    "configurados, se salta Facebook"
                 )
             return False
 
-        if "id" in resultado:
+        descripcion = f"{texto_miniatura}\n\n#historias #reflexion #realidad"
+        tamano_bytes = os.path.getsize(ruta_video)
+        nombre_archivo = os.path.basename(ruta_video)
+
+        # ---- Paso 1: iniciar la sesión de subida ----
+        url_sesion = f"https://graph.facebook.com/{API_VERSION}/{app_id}/uploads"
+        respuesta = requests.post(
+            url_sesion,
+            params={
+                "file_name": nombre_archivo,
+                "file_length": tamano_bytes,
+                "file_type": "video/mp4",
+                "access_token": page_token,
+            },
+            timeout=60,
+        )
+        resultado_sesion = _leer_respuesta(respuesta, "paso 1: iniciar sesión", logger=logger)
+        if not resultado_sesion or "id" not in resultado_sesion:
             if logger:
-                logger.info(f"Video subido a Facebook, id: {resultado['id']}")
-            return True
-        else:
-            if logger:
-                logger.error(f"Error subiendo a Facebook: {resultado}")
+                logger.error(f"No se pudo iniciar la sesión de subida a Facebook: {resultado_sesion}")
             return False
+        session_id = resultado_sesion["id"]  # viene como "upload:<ID>"
+
+        # ---- Paso 2: subir el archivo completo a esa sesión ----
+        url_subida = f"https://graph.facebook.com/{API_VERSION}/{session_id}"
+        with open(ruta_video, "rb") as archivo_video:
+            respuesta = requests.post(
+                url_subida,
+                headers={
+                    "Authorization": f"OAuth {page_token}",
+                    "file_offset": "0",
+                },
+                data=archivo_video,
+                timeout=3600,
+            )
+        resultado_subida = _leer_respuesta(respuesta, "paso 2: subir archivo", logger=logger)
+        if not resultado_subida or "h" not in resultado_subida:
+            if logger:
+                logger.error(f"No se pudo subir el archivo de video a Facebook: {resultado_subida}")
+            return False
+        handle_archivo = resultado_subida["h"]
+
+        # ---- Paso 3: publicar el video en la página con ese handle ----
+        url_publicar = f"https://graph.facebook.com/{API_VERSION}/{page_id}/videos"
+        respuesta = requests.post(
+            url_publicar,
+            data={
+                "access_token": page_token,
+                "description": descripcion,
+                "fbuploader_video_file_chunk": handle_archivo,
+            },
+            timeout=120,
+        )
+        resultado_publicar = _leer_respuesta(respuesta, "paso 3: publicar", logger=logger)
+        if not resultado_publicar or "id" not in resultado_publicar:
+            if logger:
+                logger.error(f"Error publicando el video en Facebook: {resultado_publicar}")
+            return False
+
+        if logger:
+            logger.info(f"Video subido a Facebook, id: {resultado_publicar['id']}")
+        return True
 
     except Exception as error:
         if logger:
