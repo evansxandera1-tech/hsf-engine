@@ -28,7 +28,29 @@ def subir_a_facebook(ruta_video, texto_miniatura, logger=None):
                 timeout=1800,
             )
 
-        resultado = respuesta.json()
+        # Antes se llamaba respuesta.json() directo, y si Facebook devolvía
+        # algo vacío o no-JSON (timeout intermedio, error 5xx sin cuerpo,
+        # token vencido, etc.) esto reventaba con un error generico
+        # ("Expecting value: line 1 column 1") que no decia nada util.
+        # Ahora se loguea SIEMPRE el status code y el cuerpo crudo primero,
+        # para poder diagnosticar la proxima vez que falle.
+        if logger:
+            logger.info(f"Facebook respondio con status {respuesta.status_code}")
+
+        if not respuesta.text.strip():
+            if logger:
+                logger.error(f"Facebook devolvió una respuesta vacía (status {respuesta.status_code}).")
+            return False
+
+        try:
+            resultado = respuesta.json()
+        except ValueError:
+            if logger:
+                logger.error(
+                    f"Facebook no devolvió JSON (status {respuesta.status_code}). "
+                    f"Cuerpo crudo: {respuesta.text[:500]}"
+                )
+            return False
 
         if "id" in resultado:
             if logger:
