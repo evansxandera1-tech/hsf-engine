@@ -3269,6 +3269,14 @@ def _subir_ultimo_resultado_a_youtube(logger):
     video_id = respuesta.get("id")
     logger.info(f"✅ Video publicado en YouTube: https://youtu.be/{video_id}")
 
+    # Subida a Facebook (misma página, mismo video). Si falla, no corta
+    # nada: el video ya quedó publicado en YouTube.
+    try:
+        from facebook_uploader import subir_a_facebook
+        subir_a_facebook(resultado["ruta_video"], titulo, logger=logger)
+    except Exception as e:
+        logger.warning(f"No se pudo subir a Facebook (YouTube ya quedó publicado igual): {e}")
+
     # Miniatura: se genera recién acá porque necesita el título ya armado
     # con Gemini (arriba). Si falla cualquier paso (ffmpeg o la subida),
     # se loguea el motivo y se sigue sin cortar nada: el video ya quedó
