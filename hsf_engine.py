@@ -1439,12 +1439,16 @@ def mezclar_audio_final(ruta_video_sin_audio, ruta_voz, ruta_musica, volumen_mus
     """volumen_gameplay (0-100 o None): si el video de fondo ya trae su
     propio audio (ej. el gameplay de Slither.io), se mezcla un tercer canal
     a ese volumen (fijo en 1% para no tapar la voz). Si es None, el video
-    de fondo se trata como mudo (comportamiento de siempre)."""
+    de fondo se trata como mudo (comportamiento de siempre).
+
+    La música de fondo se ralentiza un 15% (atempo=0.85) antes de mezclarla,
+    para que suene más lenta y alargada sin perder calidad (atempo no
+    cambia el tono, solo la velocidad)."""
     if ruta_musica and volumen_gameplay is not None:
         filtro = (
             f"[0:a]volume={volumen_gameplay / 100:.3f}[gp];"
             f"[1:a]volume=1.0[voz];"
-            f"[2:a]volume={volumen_musica / 100:.2f}[mus];"
+            f"[2:a]atempo=0.85,volume={volumen_musica / 100:.2f}[mus];"
             f"[voz][mus][gp]amix=inputs=3:duration=first:dropout_transition=2[aout]"
         )
         cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-stream_loop", "-1", "-i", ruta_musica, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
@@ -1456,7 +1460,7 @@ def mezclar_audio_final(ruta_video_sin_audio, ruta_voz, ruta_musica, volumen_mus
         )
         cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
     elif ruta_musica:
-        filtro = f"[1:a]volume=1.0[voz];[2:a]volume={volumen_musica / 100:.2f}[mus];[voz][mus]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+        filtro = f"[1:a]volume=1.0[voz];[2:a]atempo=0.85,volume={volumen_musica / 100:.2f}[mus];[voz][mus]amix=inputs=2:duration=first:dropout_transition=2[aout]"
         cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-stream_loop", "-1", "-i", ruta_musica, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
     else:
         cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
@@ -3341,7 +3345,7 @@ if __name__ == "__main__":
         tamano_sub=42,
         fuente_sub=None,
         musica_genero="piano",
-        volumen_musica=12,
+        volumen_musica=2,
         rutas_imagenes_subidas=[],
         animacion="dinamico",
         traducir_auto=False,
