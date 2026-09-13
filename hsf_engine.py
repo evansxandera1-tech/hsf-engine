@@ -2126,7 +2126,7 @@ def _pipeline_test_chatterbox(logger, ruta_log, segundos_test=120):
     # queda con la duración del recorte, no la del guion completo.
     logger.info("Test Chatterbox: arrancando generación del video de prueba...")
     procesar_todo(
-        guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
+        guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 2, [], "dinamico",
         False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
         opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
         efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
@@ -2338,7 +2338,7 @@ def _pipeline_video_automatico(logger, ruta_log):
     # interfaz esperando /progreso, así que conviene que bloquee acá mismo
     # hasta terminar, en vez de devolver el control antes de tiempo.
     procesar_todo(
-        guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 12, [], "dinamico",
+        guion, 3, "centro", "oro_viejo", 42, FUENTE_POR_DEFECTO, "piano", 2, [], "dinamico",
         False, False, VELOCIDAD_VOZ_POR_DEFECTO, TONO_VOZ_POR_DEFECTO,
         opacidad_sub=100, cantidad_imagenes_descargar=0, ancho_sub_pct=73, pos_y_pct=50,
         efecto_video="ninguno", velocidad_efecto=VELOCIDAD_EFECTO_POR_DEFECTO,
