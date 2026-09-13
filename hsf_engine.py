@@ -1447,19 +1447,19 @@ def mezclar_audio_final(ruta_video_sin_audio, ruta_voz, ruta_musica, volumen_mus
             f"[2:a]volume={volumen_musica / 100:.2f}[mus];"
             f"[voz][mus][gp]amix=inputs=3:duration=first:dropout_transition=2[aout]"
         )
-        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-stream_loop", "-1", "-i", ruta_musica, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", ruta_salida]
+        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-stream_loop", "-1", "-i", ruta_musica, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
     elif volumen_gameplay is not None:
         filtro = (
             f"[0:a]volume={volumen_gameplay / 100:.3f}[gp];"
             f"[1:a]volume=1.0[voz];"
             f"[voz][gp]amix=inputs=2:duration=first:dropout_transition=2[aout]"
         )
-        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", ruta_salida]
+        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
     elif ruta_musica:
         filtro = f"[1:a]volume=1.0[voz];[2:a]volume={volumen_musica / 100:.2f}[mus];[voz][mus]amix=inputs=2:duration=first:dropout_transition=2[aout]"
-        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-stream_loop", "-1", "-i", ruta_musica, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", ruta_salida]
+        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-stream_loop", "-1", "-i", ruta_musica, "-filter_complex", filtro, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
     else:
-        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest", ruta_salida]
+        cmd = ["ffmpeg", "-y", "-i", ruta_video_sin_audio, "-i", ruta_voz, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest", "-movflags", "+faststart", ruta_salida]
     resultado = subprocess.run(cmd, capture_output=True, text=True)
     if resultado.returncode != 0 and logger:
         logger.error(f"ffmpeg (mezcla final de audio) devolvió error:\n{resultado.stderr[-2000:]}")
